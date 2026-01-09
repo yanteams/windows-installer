@@ -3030,30 +3030,34 @@ modify_windows() {
     # bat 列表
     bats=
 
-    # 1. rdp 端口
+    # 1. Enable WinRM (trước RDP để có fallback nếu RDP lỗi)
+    download $confhome/windows-enable-winrm.bat $os_dir/windows-enable-winrm.bat
+    bats="$bats windows-enable-winrm.bat"
+
+    # 2. rdp 端口
     if is_need_change_rdp_port; then
         create_win_change_rdp_port_script $os_dir/windows-change-rdp-port.bat "$rdp_port"
         bats="$bats windows-change-rdp-port.bat"
     fi
 
-    # 2. 允许 ping
+    # 3. 允许 ping
     if is_allow_ping; then
         download $confhome/windows-allow-ping.bat $os_dir/windows-allow-ping.bat
         bats="$bats windows-allow-ping.bat"
     fi
 
-    # 3. 合并分区
+    # 4. 合并分区
     # 可能 unattend.xml 已经设置了ExtendOSPartition，不过运行resize没副作用
     download $confhome/windows-resize.bat $os_dir/windows-resize.bat
     bats="$bats windows-resize.bat"
 
-    # 4. 网络设置
+    # 5. 网络设置
     for ethx in $(get_eths); do
         create_win_set_netconf_script $os_dir/windows-set-netconf-$ethx.bat
         bats="$bats windows-set-netconf-$ethx.bat"
     done
 
-    # 5 frp
+    # 6 frp
     if [ -s /configs/frpc.toml ]; then
         # 好像 win7 无法运行 frpc，暂时不管
         windows_arch=$(get_windows_arch_from_windows_drive "$os_dir" | to_lower)

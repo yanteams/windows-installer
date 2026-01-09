@@ -589,10 +589,50 @@ Windows PE sẽ tự động thực hiện:
 Sau khi cài xong, Windows sẽ:
 - Khởi động lần đầu
 - Chạy các script post-installation tự động:
+  - **Enable WinRM** (tự động) - Cho phép remote qua PowerShell
   - Cấu hình mạng
   - Đặt RDP port (nếu có `--rdp-port`)
   - Cho phép Ping (nếu có `--allow-ping`)
   - Các cấu hình khác
+
+**✨ Tính năng mới: WinRM tự động enable:**
+- Script tự động enable WinRM trên port 5985 (HTTP) và 5986 (HTTPS)
+- Cho phép remote qua PowerShell ngay cả khi RDP đang restart
+- Không bị kick như RDP khi service restart
+- Có thể dùng để kiểm tra và sửa lỗi từ xa
+
+**🔍 Dấu hiệu khi cài đặt hoàn tất:**
+
+1. **Ping thành công:**
+   ```bash
+   ping 159.223.78.17
+   # Reply from 159.223.78.17: bytes=32 time=32ms TTL=115
+   ```
+   ✅ Nếu ping được, nghĩa là Windows đã khởi động và mạng đã hoạt động
+
+2. **Kiểm tra RDP port:**
+   ```bash
+   # Kiểm tra port mặc định (3389)
+   telnet 159.223.78.17 3389
+   # hoặc
+   nc -zv 159.223.78.17 3389
+   
+   # Nếu dùng port tùy chỉnh (ví dụ: 6969)
+   telnet 159.223.78.17 6969
+   nc -zv 159.223.78.17 6969
+   ```
+   ✅ Nếu port mở, RDP service đã chạy
+
+3. **Kiểm tra thời gian:**
+   - Thường mất **15-30 phút** từ lúc reboot
+   - Nếu đã qua 30-45 phút và ping được → Windows đã cài xong
+
+4. **Kiểm tra qua PowerShell (nếu có quyền):**
+   ```powershell
+   # Kết nối qua WinRM hoặc SSH (nếu có)
+   Get-Service TermService
+   # Status: Running → RDP đã sẵn sàng
+   ```
 
 ### Bước 6: Đăng nhập Windows
 
@@ -614,6 +654,21 @@ mstsc /v:your-server-ip
 mstsc /v:your-server-ip:6969
 ```
 
+**✨ Kết nối WinRM (Nếu RDP bị lỗi):**
+```powershell
+# Kết nối qua WinRM (port 5985)
+Enter-PSSession -ComputerName your-server-ip -Credential (Get-Credential)
+
+# Hoặc với username/password cụ thể
+$cred = Get-Credential
+Enter-PSSession -ComputerName your-server-ip -Credential $cred
+
+# Kiểm tra và sửa lỗi từ xa
+Test-Path "C:\windows-change-rdp-port.bat"
+Get-Service TermService
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name PortNumber
+```
+
 ### ⚠️ Lưu ý quan trọng
 
 1. **KHÔNG tắt máy** trong quá trình cài đặt
@@ -627,11 +682,104 @@ mstsc /v:your-server-ip:6969
 
 Có nhiều cách để theo dõi quá trình cài đặt Windows:
 
-#### 1. VNC/Console (Khuyến nghị - Dễ nhất)
+#### 1. WinRM/PowerShell (Khuyến nghị - Tự động enable)
 
-**Nếu máy chủ có VNC hoặc Console (KVM, iDRAC, iLO, etc.):**
-- ✅ Mở VNC/Console để xem trực tiếp màn hình cài đặt
-- ✅ Theo dõi tiến trình realtime
+**✨ Tính năng mới:** Script tự động enable WinRM để remote qua PowerShell!
+
+**Cách sử dụng:**
+```powershell
+# Kết nối qua WinRM
+Enter-PSSession -ComputerName your-server-ip -Credential (Get-Credential)
+
+# Kiểm tra trạng thái
+Get-Service TermService
+Test-Path "C:\windows-change-rdp-port.bat"
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name PortNumber
+```
+
+**Lợi ích:**
+- ✅ Không bị kick như RDP khi service restart
+- ✅ Có thể remote ngay cả khi RDP đang restart
+- ✅ Script tự động enable WinRM (port 5985/5986)
+- ✅ Có thể sửa script và cấu hình từ xa
+
+#### 2. VNC/Console (Nếu có)
+
+**VNC là gì?**
+- VNC (Virtual Network Computing) cho phép xem và điều khiển màn hình từ xa
+- Khác với RDP: VNC hiển thị màn hình thực tế của máy, không tạo session riêng
+- Hữu ích khi RDP bị lỗi hoặc cần xem quá trình boot/cài đặt
+
+**Các loại VNC/Console:**
+
+1. **Console của nhà cung cấp (Khuyến nghị - Không cần cài):**
+   - **KVM/IP**: Console qua mạng (nhiều nhà cung cấp VPS)
+   - **iDRAC** (Dell): Console management interface
+   - **iLO** (HP): Integrated Lights-Out management
+   - **IPMI**: Intelligent Platform Management Interface
+   - **NoVNC**: Web-based VNC client (nhiều cloud provider)
+   - ✅ **Không cần cài đặt gì** - Nhà cung cấp đã cung cấp sẵn
+   - ✅ **Truy cập qua web browser** hoặc client của nhà cung cấp
+
+2. **VNC Server trên Windows (Cần cài đặt - Tùy chọn):**
+   - Script có thể tự động cài TightVNC Server (tùy chọn)
+   - Cần mở port VNC (thường là 5900) trong firewall
+   - ⚠️ **VNC không được mã hóa mặc định** - Nên dùng qua VPN hoặc SSH tunnel
+
+**Cách sử dụng VNC/Console:**
+
+**Nếu có Console của nhà cung cấp:**
+1. Đăng nhập vào control panel của nhà cung cấp (VPS provider)
+2. Tìm mục "Console", "VNC", "KVM", hoặc "Remote Console"
+3. Click để mở console trong browser hoặc client
+4. Xem trực tiếp màn hình Windows
+
+**Nếu muốn cài VNC Server trên Windows (sau khi cài xong):**
+
+**Cách 1: Qua WinRM (Khuyến nghị):**
+```powershell
+# Kết nối qua WinRM
+Enter-PSSession -ComputerName your-server-ip -Credential (Get-Credential)
+
+# Tải và cài TightVNC
+Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.8/tightvnc-2.8.8-setup-64bit.msi" -OutFile "$env:TEMP\tightvnc.msi"
+Start-Process msiexec.exe -ArgumentList "/i $env:TEMP\tightvnc.msi /quiet /norestart" -Wait
+
+# Hoặc dùng Chocolatey (nếu có)
+choco install tightvnc -y
+```
+
+**Cách 2: Qua RDP (nếu đã vào được):**
+- Download VNC server software
+- Cài đặt và cấu hình
+- Mở port VNC (thường là 5900) trong firewall
+
+**Cách 3: Tự động cài qua script (Tùy chọn):**
+- Script `windows-enable-vnc.bat` có thể tự động cài TightVNC Server
+- Chạy sau khi Windows cài xong
+- Tự động mở firewall
+- ⚠️ **Lưu ý:** Script này chưa được thêm vào danh sách tự động, cần thêm thủ công nếu muốn
+
+**Kết nối VNC:**
+```bash
+# Sử dụng VNC client (TightVNC Viewer, RealVNC Viewer, etc.)
+# Kết nối đến: your-server-ip:5900
+
+# Hoặc qua SSH tunnel (bảo mật hơn):
+ssh -L 5900:localhost:5900 user@your-server-ip
+# Sau đó kết nối VNC đến localhost:5900
+```
+
+**Lưu ý về VNC:**
+- ⚠️ **VNC không được mã hóa mặc định** - Nên dùng qua VPN hoặc SSH tunnel
+- ✅ **Console của nhà cung cấp** thường an toàn hơn (qua HTTPS)
+- 🔒 **Nên dùng VNC qua SSH tunnel** để bảo mật:
+  ```bash
+  # Tạo SSH tunnel
+  ssh -L 5900:localhost:5900 user@your-server-ip
+  
+  # Sau đó kết nối VNC đến localhost:5900
+  ```
 - ✅ Thấy được các thông báo lỗi (nếu có)
 - ✅ Không cần cấu hình gì thêm
 
@@ -973,7 +1121,408 @@ Nếu máy chủ cần driver đặc biệt:
    - Khi truy cập trực tiếp sẽ bắt đầu download file ngay
    - Không phải trang HTML
 
-### Lỗi 3: "Please disable secure boot first"
+### Lỗi 3: RDP Black Screen hoặc không kết nối được
+
+**Triệu chứng:**
+- ✅ Ping thành công
+- ❌ RDP kết nối được nhưng màn hình đen (black screen)
+- ❌ Hoặc không kết nối được RDP
+
+**Nguyên nhân và giải pháp:**
+
+#### 1. **RDP chưa sẵn sàng (Windows đang khởi động)**
+
+**Dấu hiệu:**
+- Ping được nhưng RDP port chưa mở
+- Windows vẫn đang trong quá trình khởi động lần đầu
+
+**Giải pháp:**
+- ⏱️ **Đợi thêm 5-10 phút** - Windows có thể đang chạy các script post-installation
+- Kiểm tra lại RDP port sau vài phút:
+  ```bash
+  # Kiểm tra port mặc định
+  nc -zv 159.223.78.17 3389
+  
+  # Hoặc port tùy chỉnh (nếu có)
+  nc -zv 159.223.78.17 6969
+  ```
+
+#### 2. **Sai RDP Port**
+
+**Dấu hiệu:**
+- Đã dùng `--rdp-port 6969` nhưng kết nối port 3389
+
+**Giải pháp:**
+```bash
+# Kết nối với port đúng
+mstsc /v:159.223.78.17:6969
+
+# Hoặc kiểm tra port nào đang mở
+nmap -p 3389,6969 159.223.78.17
+```
+
+#### 3. **Windows Firewall chặn RDP**
+
+**Dấu hiệu:**
+- Ping được nhưng RDP port không mở
+
+**Giải pháp:**
+- Script tự động mở firewall cho RDP, nhưng nếu vẫn bị chặn:
+  - Đợi thêm vài phút để script chạy xong
+  - Hoặc dùng VNC/Console để vào và kiểm tra firewall
+
+#### 4. **RDP Service chưa khởi động**
+
+**Dấu hiệu:**
+- Windows đã khởi động nhưng RDP service chưa chạy
+
+**Giải pháp:**
+- Đợi thêm 2-3 phút - Windows có thể đang cấu hình
+- Hoặc dùng VNC/Console để kiểm tra:
+  ```powershell
+  Get-Service TermService
+  # Nếu Status != Running, đợi thêm hoặc khởi động thủ công
+  ```
+
+#### 5. **Black Screen khi kết nối RDP**
+
+**Nguyên nhân:**
+- Windows đang trong quá trình khởi động
+- Hoặc Windows đang ở màn hình lock/login
+
+**Giải pháp:**
+- ⏱️ **Đợi 2-3 phút** sau khi kết nối RDP
+- Thử **Ctrl+Alt+End** để mở Task Manager hoặc lock screen
+- Thử **Ctrl+Shift+Esc** để mở Task Manager
+- Thử gõ mật khẩu và Enter (có thể đang ở màn hình login)
+- Nếu vẫn đen, đợi thêm 5-10 phút rồi disconnect và kết nối lại
+
+#### 6. **Kiểm tra RDP đã sẵn sàng chưa**
+
+**Các bước kiểm tra:**
+
+```bash
+# 1. Kiểm tra ping
+ping 159.223.78.17
+# ✅ Nếu ping được → Mạng OK
+
+# 2. Kiểm tra RDP port
+nc -zv 159.223.78.17 3389
+# hoặc
+nc -zv 159.223.78.17 6969  # nếu dùng port tùy chỉnh
+# ✅ Nếu port mở → RDP service đã chạy
+
+# 3. Kiểm tra tất cả port đang mở
+nmap -p 3389,6969,5985,5986 159.223.78.17
+# 5985/5986 = WinRM (nếu có)
+
+# 4. Thử kết nối RDP
+mstsc /v:159.223.78.17:6969
+# Nếu kết nối được nhưng black screen → Đợi thêm
+```
+
+#### 7. **Nếu vẫn không được**
+
+**Các bước tiếp theo:**
+
+1. **Kiểm tra qua VNC/Console** (nếu có):
+   - Xem Windows đã boot xong chưa
+   - Kiểm tra màn hình có hiển thị gì không
+   - Xem có lỗi gì không
+
+2. **Kiểm tra log** (nếu có quyền SSH):
+   - Xem `/reinstall.log` để biết mật khẩu
+   - Kiểm tra script post-installation có chạy xong không
+
+3. **Đợi thêm thời gian:**
+   - Windows Server có thể mất **30-45 phút** để hoàn tất cài đặt
+   - Đặc biệt là lần khởi động đầu tiên
+
+4. **Thử lại sau 10-15 phút:**
+   - Disconnect RDP
+   - Đợi 10-15 phút
+   - Kết nối lại
+
+**Lưu ý quan trọng:**
+- ⏱️ **Kiên nhẫn đợi** - Windows cần thời gian để khởi động và cấu hình
+- 🔄 **Thử kết nối lại** sau vài phút nếu black screen
+- 📡 **Dùng VNC/Console** nếu có để xem trực tiếp màn hình
+- 🔍 **Kiểm tra port** trước khi kết nối RDP
+
+### Lỗi 3.1: RDP bị kick ra sau một lúc
+
+**Triệu chứng:**
+- ✅ Kết nối RDP thành công
+- ⏳ Thấy màn hình "Please wait for the Local Session Manager"
+- ❌ Sau đó bị disconnect/kick ra
+- ❌ Có thể kết nối lại ngay sau đó
+
+**Nguyên nhân:**
+
+1. **Script post-installation đang chạy:**
+   - Script `windows-change-rdp-port.bat` đang restart RDP service để áp dụng port mới
+   - Khi RDP service restart, Local Session Manager service cũng restart
+   - Tất cả session RDP đang kết nối sẽ bị disconnect
+
+2. **Local Session Manager đang khởi động:**
+   - Màn hình "Please wait for the Local Session Manager" xuất hiện khi service đang restart
+   - Đây là quá trình bình thường khi Windows cấu hình RDP lần đầu
+   - Service cần thời gian để khởi động lại và áp dụng cấu hình mới
+
+**Giải pháp:**
+
+1. **Đợi script chạy xong (Khuyến nghị):**
+   - ⏱️ **Đợi 5-10 phút** sau khi Windows khởi động lần đầu
+   - Script post-installation sẽ tự động chạy và hoàn tất
+   - Khi thấy màn hình "Please wait for the Local Session Manager":
+     - ✅ **Đây là bình thường** - Service đang restart
+     - ⏱️ **Đợi 1-2 phút** để service khởi động lại
+     - 🔄 **Kết nối lại** sau khi bị kick
+   - Sau đó kết nối RDP lại sẽ ổn định
+
+2. **Kiểm tra script đã chạy xong chưa:**
+   ```powershell
+   # Nếu có thể kết nối RDP, mở PowerShell và kiểm tra:
+   Get-Process | Where-Object {$_.Path -like "*windows-change-rdp-port.bat*"}
+   # Nếu không có process nào → Script đã chạy xong
+   
+   # Hoặc kiểm tra file còn tồn tại không:
+   Test-Path "C:\windows-change-rdp-port.bat"
+   # False → Script đã chạy xong và tự xóa
+   ```
+
+3. **Kết nối lại sau khi bị kick:**
+   - Script restart RDP service chỉ mất vài giây
+   - **Kết nối lại ngay** sau khi bị disconnect
+   - Lần này sẽ ổn định vì script đã chạy xong
+
+4. **Nếu vẫn bị kick liên tục:**
+   - Có thể script đang retry restart RDP service
+   - Đợi thêm 2-3 phút để script hoàn tất
+   - Hoặc dùng VNC/Console để xem trực tiếp
+
+**Các script post-installation tự động chạy:**
+- `windows-change-rdp-port.bat` - Thay đổi RDP port (nếu có `--rdp-port`)
+- `windows-allow-ping.bat` - Cho phép ping (nếu có `--allow-ping`)
+- `windows-resize.bat` - Resize partition (nếu cần)
+- `windows-set-netconf-*.bat` - Cấu hình mạng (nếu cần)
+
+**Quy trình khi thấy "Please wait for the Local Session Manager":**
+
+1. **Màn hình xuất hiện:**
+   - "Please wait for the Local Session Manager" → Service đang restart
+   - Đây là **bình thường** khi script đang cấu hình RDP
+
+2. **Bị kick ra:**
+   - Session RDP sẽ bị disconnect
+   - Đây là **bình thường** - Service đang restart
+
+3. **Kết nối lại:**
+   - ⏱️ **Đợi 1-2 phút** để service khởi động lại hoàn toàn
+   - 🔄 **Kết nối lại RDP** - Lần này sẽ ổn định hơn
+   - Nếu vẫn thấy màn hình đó → Đợi thêm 2-3 phút
+
+4. **Sau khi script chạy xong:**
+   - Script sẽ tự xóa (không còn file `.bat`)
+   - RDP sẽ ổn định và không bị kick nữa
+   - Không còn thấy màn hình "Please wait" nữa
+
+**Lưu ý:**
+- ⏱️ **Đợi 5-10 phút** sau khi Windows khởi động để script chạy xong
+- 🔄 **Kết nối lại** sau khi bị kick - lần này sẽ ổn định
+- 📝 **Script tự xóa** sau khi chạy xong (không còn file `.bat`)
+- ✅ **Sau khi script chạy xong**, RDP sẽ ổn định và không bị kick nữa
+- ⏳ **Màn hình "Please wait"** là bình thường - chỉ cần đợi service restart xong
+
+### Lỗi 3.2: Vẫn bị kick sau 30 phút
+
+**Triệu chứng:**
+- ⏱️ Đã đợi 30+ phút
+- ❌ Vẫn thấy màn hình "Please wait for the Local Session Manager"
+- ❌ Vẫn bị kick ra liên tục
+
+**Nguyên nhân có thể:**
+
+1. **Script đang retry liên tục:**
+   - Script `windows-change-rdp-port.bat` có retry logic (tối đa 5 lần)
+   - Nếu RDP service không restart thành công, script sẽ retry
+   - Mỗi lần retry sẽ restart RDP service → kick session
+
+2. **RDP service không ổn định:**
+   - RDP service có thể đang crash hoặc restart liên tục
+   - Có thể do conflict với các service khác
+
+3. **Script bị stuck:**
+   - Script có thể đang chờ điều kiện nào đó
+   - Hoặc đang trong vòng lặp retry
+
+**Giải pháp:**
+
+#### 1. **Kiểm tra từ máy khác (Không cần vào RDP):**
+
+**Kiểm tra RDP port đã đổi chưa:**
+```bash
+# Kiểm tra port nào đang mở
+nmap -p 3389,6969 159.223.78.17
+
+# Hoặc dùng telnet/nc
+nc -zv 159.223.78.17 3389
+nc -zv 159.223.78.17 6969
+
+# Nếu port 6969 mở → Port đã đổi thành công, script đã chạy xong
+# Nếu chỉ port 3389 mở → Port chưa đổi, script có thể đang chạy hoặc lỗi
+```
+
+**Nếu port 6969 đã mở:**
+- ✅ Script đã chạy xong và port đã đổi
+- ✅ Kết nối RDP với port 6969: `mstsc /v:159.223.78.17:6969`
+- ⚠️ Nếu vẫn bị kick → Có thể RDP service không ổn định, đợi thêm
+
+**Nếu chỉ port 3389 mở:**
+- ⚠️ Script có thể đang chạy hoặc đã lỗi
+- ⏱️ Đợi thêm 5-10 phút rồi kiểm tra lại
+- Nếu vẫn chỉ port 3389 mở sau 40-50 phút → Script có thể lỗi
+
+#### 2. **Kiểm tra script còn chạy không (Nếu có thể vào RDP):**
+
+Nếu có thể kết nối RDP (dù bị kick), mở PowerShell và kiểm tra:
+
+```powershell
+# Kiểm tra file script còn tồn tại không
+Test-Path "C:\windows-change-rdp-port.bat"
+# True → Script vẫn còn, chưa chạy xong
+# False → Script đã chạy xong và tự xóa
+
+# Kiểm tra RDP service status
+Get-Service TermService
+# Status: Running → Service đang chạy
+# Status: Stopped → Service đã dừng (có vấn đề)
+
+# Kiểm tra RDP port đã đổi chưa
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name PortNumber
+# PortNumber: 6969 → Port đã đổi thành công
+# PortNumber: 3389 → Port chưa đổi (script chưa chạy xong)
+```
+
+#### 3. **Nếu không thể vào RDP để kiểm tra:**
+
+**Cách 1: Đợi thêm (Nếu script đang retry):**
+- Script có retry logic, mỗi lần retry cách nhau 10 giây
+- Tối đa 5 lần retry = 50 giây
+- ⏱️ **Đợi thêm 2-3 phút** để script hoàn tất retry
+
+**Cách 2: Chạy script thủ công (Nếu script bị stuck):**
+```powershell
+# Mở PowerShell với quyền Administrator
+# Chạy script thủ công
+C:\windows-change-rdp-port.bat
+
+# Hoặc kiểm tra log (nếu có)
+Get-Content "C:\windows-change-rdp-port.bat"
+```
+
+**Cách 3: Xóa script và cấu hình thủ công (Nếu script lỗi):**
+```powershell
+# 1. Xóa script
+Remove-Item "C:\windows-change-rdp-port.bat" -Force
+
+# 2. Cấu hình RDP port thủ công
+$port = 6969
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name PortNumber -Value $port
+
+# 3. Thêm firewall rule
+New-NetFirewallRule -DisplayName "Remote Desktop - Custom Port (TCP-In)" -Direction Inbound -Protocol TCP -LocalPort $port -Action Allow
+New-NetFirewallRule -DisplayName "Remote Desktop - Custom Port (UDP-In)" -Direction Inbound -Protocol UDP -LocalPort $port -Action Allow
+
+# 4. Restart RDP service
+Restart-Service TermService -Force
+
+# 5. Kiểm tra port đã đổi
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name PortNumber
+```
+
+**Cách 1: Dùng VNC/Console (Nếu có - Khuyến nghị):**
+- Vào Windows qua VNC/Console (KVM, iDRAC, iLO, etc.)
+- Kiểm tra script và service như trên
+- Có thể xóa script và cấu hình thủ công nếu cần
+
+**Cách 2: Dùng WinRM (Khuyến nghị - Script tự động enable):**
+
+✨ **Tính năng mới:** Script giờ tự động enable WinRM để có thể remote qua PowerShell nếu RDP bị lỗi!
+
+**Kiểm tra WinRM đã enable chưa:**
+```bash
+# Kiểm tra port WinRM
+nc -zv 159.223.78.17 5985
+nc -zv 159.223.78.17 5986
+```
+
+**Kết nối qua WinRM:**
+```powershell
+# Kết nối qua WinRM (port 5985 hoặc 5986)
+Enter-PSSession -ComputerName 159.223.78.17 -Credential (Get-Credential)
+
+# Hoặc với username/password cụ thể
+$cred = Get-Credential
+Enter-PSSession -ComputerName 159.223.78.17 -Credential $cred
+
+# Sau đó chạy các lệnh kiểm tra và sửa:
+Test-Path "C:\windows-change-rdp-port.bat"
+Get-Service TermService
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name PortNumber
+```
+
+**Lợi ích của WinRM:**
+- ✅ Không bị kick như RDP khi service restart
+- ✅ Có thể remote ngay cả khi RDP đang restart
+- ✅ Script tự động enable WinRM trước khi thay đổi RDP port
+- ✅ Có thể sửa script và cấu hình từ xa
+
+**Cách 3: Đợi script tự chạy xong (Khuyến nghị nếu không có VNC/Console):**
+- ⏱️ **Đợi thêm 10-20 phút**
+- Script có retry logic (tối đa 5 lần, mỗi lần cách 10 giây)
+- Tổng thời gian tối đa: ~1 phút cho retry + thời gian restart service
+- Sau đó script sẽ tự xóa
+- Kiểm tra port từ máy khác để xác nhận
+
+**Cách 4: Kết nối RDP với port mặc định (3389) tạm thời:**
+- Nếu script đang chạy và restart service liên tục
+- Có thể thử kết nối với port 3389 (nếu vẫn mở):
+  ```bash
+  mstsc /v:159.223.78.17:3389
+  ```
+- Nếu vào được → Có thể xóa script và cấu hình thủ công
+- ⚠️ Lưu ý: Vẫn có thể bị kick nếu script đang restart service
+
+#### 4. **Nếu port đã đổi (6969) nhưng vẫn bị kick:**
+
+Có thể RDP service đang không ổn định:
+
+```powershell
+# Kiểm tra RDP service
+Get-Service TermService
+
+# Nếu service đang restart liên tục, thử:
+# 1. Dừng service
+Stop-Service TermService -Force
+
+# 2. Đợi 5 giây
+Start-Sleep -Seconds 5
+
+# 3. Khởi động lại
+Start-Service TermService
+
+# 4. Kiểm tra lại
+Get-Service TermService
+```
+
+**Lưu ý quan trọng:**
+- ⚠️ **Nếu script vẫn còn sau 30 phút** → Có thể script đang bị lỗi hoặc stuck
+- 🔍 **Kiểm tra script và service** để xác định vấn đề
+- 🛠️ **Có thể cần can thiệp thủ công** nếu script lỗi
+- 📝 **Script bình thường sẽ tự xóa** sau khi chạy xong (vài phút)
+
+### Lỗi 4: "Please disable secure boot first"
 
 **Nguyên nhân:** Secure Boot đang bật.
 
