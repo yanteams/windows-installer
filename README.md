@@ -65,7 +65,7 @@ chmod +x reinstall.sh
   --image-name="windows server 2022 serverdatacenter" \
   --lang=en-us \
   --password "CoConCac975@" \
-  --rdp-port 6969 \
+  --rdp-port 3389 \
   --allow-ping
 
 # Ví dụ 2: Cài Windows với driver tùy chỉnh (nếu cần)

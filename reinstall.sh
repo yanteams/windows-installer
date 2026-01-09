@@ -4382,41 +4382,45 @@ fi
 check_ram
 
 # 启动 progress tracking server (nếu có backend)
+PROGRESS_PORT=${PROGRESS_PORT:-8080}
+export PROGRESS_PORT
+export PROGRESS_LOG=/reinstall.log
+
+# Generate unique session ID for this installation
+PROGRESS_SESSION_ID=$(generate_session_id)
+export PROGRESS_SESSION_ID
+
+# Function to open firewall port
+open_firewall_port() {
+    local port=$1
+    
+    # Try ufw (Ubuntu/Debian)
+    if command -v ufw >/dev/null 2>&1; then
+        if ufw status 2>/dev/null | grep -q "Status: active"; then
+            ufw allow $port/tcp >/dev/null 2>&1 || true
+        fi
+    fi
+    
+    # Try firewalld (CentOS/RHEL/Fedora)
+    if command -v firewall-cmd >/dev/null 2>&1; then
+        if firewall-cmd --state >/dev/null 2>&1; then
+            firewall-cmd --permanent --add-port=$port/tcp >/dev/null 2>&1 || true
+            firewall-cmd --reload >/dev/null 2>&1 || true
+        fi
+    fi
+    
+    # Try iptables (fallback, requires root)
+    if command -v iptables >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
+        if ! iptables -C INPUT -p tcp --dport $port -j ACCEPT >/dev/null 2>&1; then
+            iptables -I INPUT -p tcp --dport $port -j ACCEPT >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
+# Check if backend is available
+BACKEND_AVAILABLE=false
 if [ -d "$(dirname "$0")/backend" ] && command -v node >/dev/null 2>&1; then
-    PROGRESS_PORT=${PROGRESS_PORT:-8080}
-    export PROGRESS_PORT
-    export PROGRESS_LOG=/reinstall.log
-    
-    # Generate unique session ID for this installation
-    PROGRESS_SESSION_ID=$(generate_session_id)
-    export PROGRESS_SESSION_ID
-    
-    # Function to open firewall port
-    open_firewall_port() {
-        local port=$1
-        
-        # Try ufw (Ubuntu/Debian)
-        if command -v ufw >/dev/null 2>&1; then
-            if ufw status 2>/dev/null | grep -q "Status: active"; then
-                ufw allow $port/tcp >/dev/null 2>&1 || true
-            fi
-        fi
-        
-        # Try firewalld (CentOS/RHEL/Fedora)
-        if command -v firewall-cmd >/dev/null 2>&1; then
-            if firewall-cmd --state >/dev/null 2>&1; then
-                firewall-cmd --permanent --add-port=$port/tcp >/dev/null 2>&1 || true
-                firewall-cmd --reload >/dev/null 2>&1 || true
-            fi
-        fi
-        
-        # Try iptables (fallback, requires root)
-        if command -v iptables >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
-            if ! iptables -C INPUT -p tcp --dport $port -j ACCEPT >/dev/null 2>&1; then
-                iptables -I INPUT -p tcp --dport $port -j ACCEPT >/dev/null 2>&1 || true
-            fi
-        fi
-    }
+    BACKEND_AVAILABLE=true
     
     # Open firewall port before starting server
     open_firewall_port $PROGRESS_PORT
@@ -4433,23 +4437,46 @@ if [ -d "$(dirname "$0")/backend" ] && command -v node >/dev/null 2>&1; then
         
         # Report initial progress
         report_progress "Khởi tạo" 0 "running" "Bắt đầu quá trình cài đặt..."
-        
-        SERVER_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "YOUR_SERVER_IP")
-        DASHBOARD_URL="http://${SERVER_IP}:${PROGRESS_PORT}?sessionId=${PROGRESS_SESSION_ID}"
-        DASHBOARD_URL_LOCAL="http://localhost:${PROGRESS_PORT}?sessionId=${PROGRESS_SESSION_ID}"
-        
-        info "Progress tracking server started on port $PROGRESS_PORT"
-        echo
-        echo "═══════════════════════════════════════════════════════════════"
-        echo "📊 PROGRESS TRACKING DASHBOARD"
-        echo "═══════════════════════════════════════════════════════════════"
-        echo "🌐 URL: ${DASHBOARD_URL}"
-        echo "   Hoặc: ${DASHBOARD_URL_LOCAL}"
-        echo "   Session ID: ${PROGRESS_SESSION_ID}"
-        echo "═══════════════════════════════════════════════════════════════"
-        echo
     fi
 fi
+
+# Always show dashboard info, even if backend is not available
+SERVER_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "YOUR_SERVER_IP")
+DASHBOARD_URL="http://${SERVER_IP}:${PROGRESS_PORT}?sessionId=${PROGRESS_SESSION_ID}"
+DASHBOARD_URL_LOCAL="http://localhost:${PROGRESS_PORT}?sessionId=${PROGRESS_SESSION_ID}"
+
+if [ "$BACKEND_AVAILABLE" = true ]; then
+    info "Progress tracking server started on port $PROGRESS_PORT"
+else
+    warn "Progress tracking server không khả dụng"
+    if [ ! -d "$(dirname "$0")/backend" ]; then
+        warn "Thư mục backend không tồn tại. Hãy clone repository đầy đủ:"
+        warn "  git clone https://github.com/yanteams/windows-installer.git"
+    fi
+    if ! command -v node >/dev/null 2>&1; then
+        warn "Node.js chưa được cài đặt. Cài đặt Node.js để sử dụng progress tracking:"
+        warn "  Ubuntu/Debian: apt-get install -y nodejs npm"
+        warn "  CentOS/RHEL: yum install -y nodejs npm"
+    fi
+fi
+
+echo
+echo "═══════════════════════════════════════════════════════════════"
+echo "📊 PROGRESS TRACKING DASHBOARD"
+echo "═══════════════════════════════════════════════════════════════"
+if [ "$BACKEND_AVAILABLE" = true ]; then
+    echo "🌐 URL: ${DASHBOARD_URL}"
+    echo "   Hoặc: ${DASHBOARD_URL_LOCAL}"
+    echo "   Session ID: ${PROGRESS_SESSION_ID}"
+    echo "   Status: ✅ Đang chạy"
+else
+    echo "🌐 URL: ${DASHBOARD_URL}"
+    echo "   Hoặc: ${DASHBOARD_URL_LOCAL}"
+    echo "   Session ID: ${PROGRESS_SESSION_ID}"
+    echo "   Status: ⚠️  Chưa khả dụng (cần backend và Node.js)"
+fi
+echo "═══════════════════════════════════════════════════════════════"
+echo
 
 # 以下目标系统不需要两步安装
 # alpine
@@ -4834,11 +4861,17 @@ else
     echo "Reboot to start the installation."
 fi
 
-# Hiển thị thông tin progress tracking dashboard
-if [ -n "$PROGRESS_PORT" ] && [ -n "$PROGRESS_SESSION_ID" ] && [ -d "$(dirname "$0")/backend" ]; then
+# Hiển thị thông tin progress tracking dashboard (luôn hiển thị)
+if [ -n "$PROGRESS_PORT" ] && [ -n "$PROGRESS_SESSION_ID" ]; then
     SERVER_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "YOUR_SERVER_IP")
     DASHBOARD_URL="http://${SERVER_IP}:${PROGRESS_PORT}?sessionId=${PROGRESS_SESSION_ID}"
     DASHBOARD_URL_LOCAL="http://localhost:${PROGRESS_PORT}?sessionId=${PROGRESS_SESSION_ID}"
+    
+    BACKEND_READY=false
+    if [ -d "$(dirname "$0")/backend" ] && command -v node >/dev/null 2>&1; then
+        BACKEND_READY=true
+    fi
+    
     echo
     echo "═══════════════════════════════════════════════════════════════"
     echo "📊 THEO DÕI TIẾN TRÌNH CÀI ĐẶT REALTIME"
@@ -4846,6 +4879,22 @@ if [ -n "$PROGRESS_PORT" ] && [ -n "$PROGRESS_SESSION_ID" ] && [ -d "$(dirname "
     echo "🌐 Dashboard: ${DASHBOARD_URL}"
     echo "   Hoặc:      ${DASHBOARD_URL_LOCAL}"
     echo "   Session ID: ${PROGRESS_SESSION_ID}"
+    if [ "$BACKEND_READY" = true ]; then
+        echo "   Status:    ✅ Đang chạy"
+    else
+        echo "   Status:    ⚠️  Chưa khả dụng"
+        if [ ! -d "$(dirname "$0")/backend" ]; then
+            echo ""
+            echo "   ⚠️  Thư mục backend không tồn tại"
+            echo "   💡 Clone repository đầy đủ để sử dụng:"
+            echo "      git clone https://github.com/yanteams/windows-installer.git"
+        fi
+        if ! command -v node >/dev/null 2>&1; then
+            echo ""
+            echo "   ⚠️  Node.js chưa được cài đặt"
+            echo "   💡 Cài đặt Node.js để sử dụng progress tracking"
+        fi
+    fi
     echo ""
     echo "✨ Tính năng:"
     echo "   - Hiển thị tiến độ realtime"
