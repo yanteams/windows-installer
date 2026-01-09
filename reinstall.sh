@@ -130,6 +130,14 @@ error() {
     report_progress "" "" "error" "$*"
 }
 
+# Generate unique session ID
+generate_session_id() {
+    # Use timestamp + random string for uniqueness
+    local timestamp=$(date +%s)
+    local random=$(head -c 8 /dev/urandom 2>/dev/null | base64 | tr -d "=+/" | cut -c1-8 || echo "$$")
+    echo "install-${timestamp}-${random}"
+}
+
 # Progress reporting function
 report_progress() {
     local step="$1"
@@ -138,9 +146,10 @@ report_progress() {
     local message="$4"
     
     # Only report if progress server is available
-    if [ -n "$PROGRESS_PORT" ] && command -v curl >/dev/null 2>&1; then
+    if [ -n "$PROGRESS_PORT" ] && [ -n "$PROGRESS_SESSION_ID" ] && command -v curl >/dev/null 2>&1; then
         local url="http://localhost:${PROGRESS_PORT}/api/progress"
-        local payload="{\"step\":\"$step\""
+        local payload="{\"sessionId\":\"$PROGRESS_SESSION_ID\""
+        [ -n "$step" ] && payload="${payload},\"step\":\"$step\""
         [ -n "$progress" ] && payload="${payload},\"progress\":$progress"
         [ -n "$status" ] && payload="${payload},\"status\":\"$status\""
         [ -n "$message" ] && payload="${payload},\"message\":\"$message\""
@@ -3824,8 +3833,9 @@ This script is outdated, please download reinstall.sh again.
         SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
         if [ -d "$SCRIPT_DIR/backend" ]; then
             cp -r "$SCRIPT_DIR/backend" $initrd_dir/backend
-            # Lưu PROGRESS_PORT vào configs để trans.sh có thể đọc
+            # Lưu PROGRESS_PORT và PROGRESS_SESSION_ID vào configs để trans.sh có thể đọc
             echo "$PROGRESS_PORT" >$initrd_dir/configs/PROGRESS_PORT
+            [ -n "$PROGRESS_SESSION_ID" ] && echo "$PROGRESS_SESSION_ID" >$initrd_dir/configs/PROGRESS_SESSION_ID
         fi
     fi
 
@@ -4377,6 +4387,40 @@ if [ -d "$(dirname "$0")/backend" ] && command -v node >/dev/null 2>&1; then
     export PROGRESS_PORT
     export PROGRESS_LOG=/reinstall.log
     
+    # Generate unique session ID for this installation
+    PROGRESS_SESSION_ID=$(generate_session_id)
+    export PROGRESS_SESSION_ID
+    
+    # Function to open firewall port
+    open_firewall_port() {
+        local port=$1
+        
+        # Try ufw (Ubuntu/Debian)
+        if command -v ufw >/dev/null 2>&1; then
+            if ufw status 2>/dev/null | grep -q "Status: active"; then
+                ufw allow $port/tcp >/dev/null 2>&1 || true
+            fi
+        fi
+        
+        # Try firewalld (CentOS/RHEL/Fedora)
+        if command -v firewall-cmd >/dev/null 2>&1; then
+            if firewall-cmd --state >/dev/null 2>&1; then
+                firewall-cmd --permanent --add-port=$port/tcp >/dev/null 2>&1 || true
+                firewall-cmd --reload >/dev/null 2>&1 || true
+            fi
+        fi
+        
+        # Try iptables (fallback, requires root)
+        if command -v iptables >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
+            if ! iptables -C INPUT -p tcp --dport $port -j ACCEPT >/dev/null 2>&1; then
+                iptables -I INPUT -p tcp --dport $port -j ACCEPT >/dev/null 2>&1 || true
+            fi
+        fi
+    }
+    
+    # Open firewall port before starting server
+    open_firewall_port $PROGRESS_PORT
+    
     # Start progress server in background
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
     if [ -f "$SCRIPT_DIR/start-progress-server.sh" ]; then
@@ -4390,8 +4434,20 @@ if [ -d "$(dirname "$0")/backend" ] && command -v node >/dev/null 2>&1; then
         # Report initial progress
         report_progress "Khởi tạo" 0 "running" "Bắt đầu quá trình cài đặt..."
         
+        SERVER_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "YOUR_SERVER_IP")
+        DASHBOARD_URL="http://${SERVER_IP}:${PROGRESS_PORT}?sessionId=${PROGRESS_SESSION_ID}"
+        DASHBOARD_URL_LOCAL="http://localhost:${PROGRESS_PORT}?sessionId=${PROGRESS_SESSION_ID}"
+        
         info "Progress tracking server started on port $PROGRESS_PORT"
-        info "Access dashboard at: http://$(hostname -I | awk '{print $1}'):$PROGRESS_PORT"
+        echo
+        echo "═══════════════════════════════════════════════════════════════"
+        echo "📊 PROGRESS TRACKING DASHBOARD"
+        echo "═══════════════════════════════════════════════════════════════"
+        echo "🌐 URL: ${DASHBOARD_URL}"
+        echo "   Hoặc: ${DASHBOARD_URL_LOCAL}"
+        echo "   Session ID: ${PROGRESS_SESSION_ID}"
+        echo "═══════════════════════════════════════════════════════════════"
+        echo
     fi
 fi
 
@@ -4776,6 +4832,29 @@ elif [ "$distro" = fnos ]; then
     echo "你需要尽快在 http://SERVER_IP:5666 配置账号密码。"
 else
     echo "Reboot to start the installation."
+fi
+
+# Hiển thị thông tin progress tracking dashboard
+if [ -n "$PROGRESS_PORT" ] && [ -n "$PROGRESS_SESSION_ID" ] && [ -d "$(dirname "$0")/backend" ]; then
+    SERVER_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "YOUR_SERVER_IP")
+    DASHBOARD_URL="http://${SERVER_IP}:${PROGRESS_PORT}?sessionId=${PROGRESS_SESSION_ID}"
+    DASHBOARD_URL_LOCAL="http://localhost:${PROGRESS_PORT}?sessionId=${PROGRESS_SESSION_ID}"
+    echo
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "📊 THEO DÕI TIẾN TRÌNH CÀI ĐẶT REALTIME"
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "🌐 Dashboard: ${DASHBOARD_URL}"
+    echo "   Hoặc:      ${DASHBOARD_URL_LOCAL}"
+    echo "   Session ID: ${PROGRESS_SESSION_ID}"
+    echo ""
+    echo "✨ Tính năng:"
+    echo "   - Hiển thị tiến độ realtime"
+    echo "   - Logs chi tiết với timestamps"
+    echo "   - Thông báo khi có cập nhật"
+    echo "   - Tự động kết nối lại khi mất kết nối"
+    echo "   - Mỗi lần cài đặt có session ID riêng"
+    echo "═══════════════════════════════════════════════════════════════"
+    echo
 fi
 
 if is_in_windows; then

@@ -29,6 +29,44 @@ if [ ! -d "$BACKEND_DIR/node_modules" ]; then
     npm install
 fi
 
+# Function to open firewall port
+open_firewall_port() {
+    local port=$1
+    
+    # Try ufw (Ubuntu/Debian)
+    if command -v ufw >/dev/null 2>&1; then
+        if ufw status | grep -q "Status: active"; then
+            echo "Opening port $port with ufw..."
+            ufw allow $port/tcp >/dev/null 2>&1 || true
+        fi
+    fi
+    
+    # Try firewalld (CentOS/RHEL/Fedora)
+    if command -v firewall-cmd >/dev/null 2>&1; then
+        if firewall-cmd --state >/dev/null 2>&1; then
+            echo "Opening port $port with firewalld..."
+            firewall-cmd --permanent --add-port=$port/tcp >/dev/null 2>&1 || true
+            firewall-cmd --reload >/dev/null 2>&1 || true
+        fi
+    fi
+    
+    # Try iptables (fallback)
+    if command -v iptables >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
+        # Check if rule already exists
+        if ! iptables -C INPUT -p tcp --dport $port -j ACCEPT >/dev/null 2>&1; then
+            echo "Opening port $port with iptables..."
+            iptables -I INPUT -p tcp --dport $port -j ACCEPT >/dev/null 2>&1 || true
+            # Try to save iptables rules
+            if command -v iptables-save >/dev/null 2>&1; then
+                iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+            fi
+        fi
+    fi
+}
+
+# Open firewall port for progress server
+open_firewall_port $PROGRESS_PORT
+
 # Start the server
 cd "$BACKEND_DIR"
 export PROGRESS_PORT=$PROGRESS_PORT

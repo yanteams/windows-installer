@@ -48,9 +48,10 @@ report_progress() {
     local message="$4"
     
     # Only report if progress server is available
-    if [ -n "$PROGRESS_PORT" ] && command -v curl >/dev/null 2>&1; then
+    if [ -n "$PROGRESS_PORT" ] && [ -n "$PROGRESS_SESSION_ID" ] && command -v curl >/dev/null 2>&1; then
         local url="http://localhost:${PROGRESS_PORT}/api/progress"
-        local payload="{\"step\":\"$step\""
+        local payload="{\"sessionId\":\"$PROGRESS_SESSION_ID\""
+        [ -n "$step" ] && payload="${payload},\"step\":\"$step\""
         [ -n "$progress" ] && payload="${payload},\"progress\":$progress"
         [ -n "$status" ] && payload="${payload},\"status\":\"$status\""
         [ -n "$message" ] && payload="${payload},\"message\":\"$message\""
@@ -436,8 +437,9 @@ extract_env_from_cmdline() {
         done < <(xargs -n1 </proc/cmdline | grep "^${prefix}_" | sed "s/^${prefix}_//")
     done
     
-    # Export PROGRESS_PORT nếu có để report_progress có thể dùng
+    # Export PROGRESS_PORT và PROGRESS_SESSION_ID nếu có để report_progress có thể dùng
     [ -n "$PROGRESS_PORT" ] && export PROGRESS_PORT
+    [ -n "$PROGRESS_SESSION_ID" ] && export PROGRESS_SESSION_ID
 }
 
 ensure_service_started() {
@@ -7345,14 +7347,48 @@ rm -f /etc/runlevels/default/local
 # 提取变量
 extract_env_from_cmdline
 
-# Đọc PROGRESS_PORT từ configs nếu có
+# Đọc PROGRESS_PORT và PROGRESS_SESSION_ID từ configs nếu có
 if [ -z "$PROGRESS_PORT" ] && [ -f /configs/PROGRESS_PORT ]; then
     PROGRESS_PORT=$(cat /configs/PROGRESS_PORT)
     export PROGRESS_PORT
 fi
+if [ -z "$PROGRESS_SESSION_ID" ] && [ -f /configs/PROGRESS_SESSION_ID ]; then
+    PROGRESS_SESSION_ID=$(cat /configs/PROGRESS_SESSION_ID)
+    export PROGRESS_SESSION_ID
+fi
+
+# Function to open firewall port
+open_firewall_port() {
+    local port=$1
+    
+    # Try ufw (Ubuntu/Debian)
+    if command -v ufw >/dev/null 2>&1; then
+        if ufw status 2>/dev/null | grep -q "Status: active"; then
+            ufw allow $port/tcp >/dev/null 2>&1 || true
+        fi
+    fi
+    
+    # Try firewalld (CentOS/RHEL/Fedora)
+    if command -v firewall-cmd >/dev/null 2>&1; then
+        if firewall-cmd --state >/dev/null 2>&1; then
+            firewall-cmd --permanent --add-port=$port/tcp >/dev/null 2>&1 || true
+            firewall-cmd --reload >/dev/null 2>&1 || true
+        fi
+    fi
+    
+    # Try iptables (fallback, requires root)
+    if command -v iptables >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
+        if ! iptables -C INPUT -p tcp --dport $port -j ACCEPT >/dev/null 2>&1; then
+            iptables -I INPUT -p tcp --dport $port -j ACCEPT >/dev/null 2>&1 || true
+        fi
+    fi
+}
 
 # Khởi động lại progress server nếu có PROGRESS_PORT và backend
 if [ -n "$PROGRESS_PORT" ] && [ -d /backend ] && command -v node >/dev/null 2>&1; then
+    # Mở port firewall
+    open_firewall_port $PROGRESS_PORT
+    
     # Kiểm tra xem server đã chạy chưa
     if ! curl -s "http://localhost:${PROGRESS_PORT}/api/progress" >/dev/null 2>&1; then
         # Server chưa chạy, khởi động lại
@@ -7361,9 +7397,30 @@ if [ -n "$PROGRESS_PORT" ] && [ -d /backend ] && command -v node >/dev/null 2>&1
         if [ ! -d node_modules ]; then
             npm install >/dev/null 2>&1 || true
         fi
-        node server.js >/dev/null 2>&1 &
-        sleep 2
-        report_progress "Khởi động lại" 1 "running" "Đã khởi động lại progress tracking server..."
+        
+        # Khởi động server trong background với nohup để đảm bảo tiếp tục chạy
+        nohup node server.js >/tmp/progress-server.log 2>&1 &
+        PROGRESS_SERVER_PID=$!
+        sleep 3
+        
+        # Lưu thông tin session vào file để có thể truy cập lại
+        if [ -n "$PROGRESS_SESSION_ID" ]; then
+            SERVER_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "YOUR_SERVER_IP")
+            DASHBOARD_URL="http://${SERVER_IP}:${PROGRESS_PORT}?sessionId=${PROGRESS_SESSION_ID}"
+            echo "═══════════════════════════════════════════════════════════════" > /tmp/dashboard-info.txt
+            echo "📊 PROGRESS TRACKING DASHBOARD" >> /tmp/dashboard-info.txt
+            echo "═══════════════════════════════════════════════════════════════" >> /tmp/dashboard-info.txt
+            echo "🌐 URL: ${DASHBOARD_URL}" >> /tmp/dashboard-info.txt
+            echo "   Session ID: ${PROGRESS_SESSION_ID}" >> /tmp/dashboard-info.txt
+            echo "   Port: ${PROGRESS_PORT}" >> /tmp/dashboard-info.txt
+            echo "═══════════════════════════════════════════════════════════════" >> /tmp/dashboard-info.txt
+            cat /tmp/dashboard-info.txt
+        fi
+        
+        report_progress "Khởi động lại" 1 "running" "Đã khởi động lại progress tracking server sau reboot..."
+    else
+        # Server đã chạy, chỉ cần báo cáo lại
+        report_progress "Tiếp tục" 1 "running" "Progress tracking server đã sẵn sàng..."
     fi
 fi
 

@@ -58,8 +58,9 @@ curl -O https://raw.githubusercontent.com/yanteams/windows-installer/main/reinst
 chmod +x reinstall.sh
 
 git clone https://github.com/yanteams/windows-installer.git
-cd reinstall
+cd windows-installer
 chmod +x reinstall.sh
+
 ./reinstall.sh windows \
   --image-name="windows server 2022 serverdatacenter" \
   --lang=en-us \

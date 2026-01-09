@@ -2,6 +2,7 @@
 # Helper script to report progress to the backend server
 
 PROGRESS_PORT=${PROGRESS_PORT:-8080}
+PROGRESS_SESSION_ID=${PROGRESS_SESSION_ID:-}
 PROGRESS_URL="http://localhost:${PROGRESS_PORT}/api/progress"
 
 # Report progress update
@@ -11,7 +12,12 @@ report_progress() {
     local status="${3:-running}"
     local message="$4"
     
-    local payload="{\"step\":\"$step\",\"progress\":$progress"
+    # Skip if no session ID
+    [ -z "$PROGRESS_SESSION_ID" ] && return 0
+    
+    local payload="{\"sessionId\":\"$PROGRESS_SESSION_ID\""
+    [ -n "$step" ] && payload="${payload},\"step\":\"$step\""
+    [ -n "$progress" ] && payload="${payload},\"progress\":$progress"
     [ -n "$status" ] && payload="${payload},\"status\":\"$status\""
     [ -n "$message" ] && payload="${payload},\"message\":\"$message\""
     payload="${payload}}"
@@ -30,7 +36,11 @@ report_error() {
 # Report log message
 report_log() {
     local message="$1"
-    report_progress "" "" "" "$message"
+    [ -z "$PROGRESS_SESSION_ID" ] && return 0
+    
+    curl -s -X POST "${PROGRESS_URL}/log" \
+        -H "Content-Type: application/json" \
+        -d "{\"sessionId\":\"$PROGRESS_SESSION_ID\",\"message\":\"$message\"}" >/dev/null 2>&1 || true
 }
 
 # Initialize progress tracking

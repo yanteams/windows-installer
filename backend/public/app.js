@@ -8,10 +8,37 @@ let lastProgress = 0;
 let startTime = null;
 let estimatedTime = null;
 
+// Get sessionId from URL
+function getSessionId() {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('sessionId') || null;
+}
+
+// Check if we're on the session list page
+function isSessionListPage() {
+    return window.location.pathname === '/' && !getSessionId();
+}
+
 // Initialize WebSocket connection
 function connectWebSocket() {
+    const sessionId = getSessionId();
+    if (!sessionId) {
+        // If no sessionId and we're on the main page, redirect to session list
+        if (window.location.pathname === '/' || window.location.pathname === '/index.html') {
+            // Already on root, just show error
+            console.warn('No sessionId found in URL');
+            updateConnectionStatus('error');
+            showToast('Không tìm thấy Session ID. Vui lòng truy cập từ link trong script cài đặt.', 'error');
+            return;
+        }
+        console.error('No sessionId found in URL');
+        updateConnectionStatus('error');
+        showToast('Không tìm thấy Session ID trong URL', 'error');
+        return;
+    }
+    
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}`;
+    const wsUrl = `${wsProtocol}//${window.location.host}?sessionId=${sessionId}`;
     
     updateConnectionStatus('connecting');
     
@@ -333,15 +360,20 @@ function escapeHtml(text) {
 // Event listeners
 document.getElementById('clearLogs').addEventListener('click', () => {
     if (confirm('Bạn có chắc muốn xóa nhật ký?')) {
-        fetch(`${API_URL}/api/reset`, { method: 'POST' })
-            .then(() => {
-                showToast('Đã xóa nhật ký', 'success');
-                setTimeout(() => location.reload(), 500);
-            })
-            .catch(err => {
-                console.error('Failed to clear logs:', err);
-                showToast('Không thể xóa nhật ký', 'error');
-            });
+        const sessionId = getSessionId();
+        if (sessionId) {
+            fetch(`${API_URL}/api/reset/${sessionId}`, { method: 'POST' })
+                .then(() => {
+                    showToast('Đã xóa nhật ký', 'success');
+                    setTimeout(() => location.reload(), 500);
+                })
+                .catch(err => {
+                    console.error('Failed to clear logs:', err);
+                    showToast('Không thể xóa nhật ký', 'error');
+                });
+        } else {
+            showToast('Không tìm thấy Session ID', 'error');
+        }
     }
 });
 
@@ -414,21 +446,37 @@ document.getElementById('logFilter').addEventListener('input', (e) => {
     }
 });
 
-// Fetch initial state
-fetch(`${API_URL}/api/progress`)
-    .then(res => res.json())
-    .then(data => {
-        storedLogs = data.logs || [];
-        sessionStorage.setItem('currentLogs', JSON.stringify(storedLogs));
-        updateUI(data);
-    })
-    .catch(err => {
-        console.error('Failed to fetch initial state:', err);
-        showToast('Không thể tải trạng thái ban đầu', 'error');
-    });
-
-// Connect WebSocket
-connectWebSocket();
+// Fetch initial state and connect WebSocket
+const currentSessionId = getSessionId();
+if (currentSessionId) {
+    // Fetch initial state
+    fetch(`${API_URL}/api/progress/${currentSessionId}`)
+        .then(res => res.json())
+        .then(data => {
+            storedLogs = data.logs || [];
+            sessionStorage.setItem('currentLogs', JSON.stringify(storedLogs));
+            updateUI(data);
+        })
+        .catch(err => {
+            console.error('Failed to fetch initial state:', err);
+            showToast('Không thể tải trạng thái ban đầu', 'error');
+        });
+    
+    // Connect WebSocket
+    connectWebSocket();
+} else {
+    // Show message that sessionId is required
+    document.body.innerHTML = `
+        <div style="text-align: center; padding: 50px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center;">
+            <div style="background: white; padding: 40px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-width: 600px;">
+                <h1 style="color: #333; margin-bottom: 20px;">⚠️ Session ID Required</h1>
+                <p style="color: #666; margin-bottom: 15px;">Vui lòng truy cập từ link được cung cấp trong script cài đặt.</p>
+                <p style="color: #666; margin-bottom: 15px;">Link có dạng: <code style="background: #f5f5f5; padding: 5px 10px; border-radius: 5px; font-family: monospace;">http://SERVER_IP:PORT?sessionId=install-xxx</code></p>
+                <p style="margin-top: 30px;"><a href="/" style="color: #667eea; text-decoration: none; font-weight: bold;">← Quay lại danh sách sessions</a></p>
+            </div>
+        </div>
+    `;
+}
 
 // Refresh on visibility change
 document.addEventListener('visibilitychange', () => {
