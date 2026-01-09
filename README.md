@@ -54,16 +54,16 @@ Hướng dẫn chi tiết cách sử dụng script `reinstall.sh` để cài đ�
 **Chỉ cần tải file `reinstall.sh` là đủ!** Script sẽ tự động tải các file cần thiết khác từ GitHub khi chạy.
 
 ```bash
-curl -O https://raw.githubusercontent.com/bin456789/reinstall/main/reinstall.sh
+curl -O https://raw.githubusercontent.com/yanteams/windows-installer/main/reinstall.sh
 chmod +x reinstall.sh
 
-git clone https://github.com/bin456789/reinstall.git
+git clone https://github.com/yanteams/windows-installer.git
 cd reinstall
 chmod +x reinstall.sh
 ./reinstall.sh windows \
   --image-name="windows server 2022 serverdatacenter" \
   --lang=en-us \
-  --password "Khoa@@201911" \
+  --password "CoConCac975@" \
   --rdp-port 6969 \
   --allow-ping
 
@@ -72,7 +72,7 @@ chmod +x reinstall.sh
 ./reinstall.sh windows \
   --image-name="windows server 2022 serverdatacenter" \
   --lang=en-us \
-  --password "Khoa@@201911" \
+  --password "CoConCac975@" \
   --rdp-port 6969 \
   --allow-ping \
   --add-driver /path/to/driver.inf
@@ -84,7 +84,7 @@ chmod +x reinstall.sh
   --image-name="windows server 2022 serverdatacenter" \
   --lang=en-us \
   --iso="https://example.com/win2022.iso" \
-  --password "Khoa@@201911" \
+  --password "CoConCac975@" \
   --rdp-port 6969 \
   --allow-ping
 
@@ -92,7 +92,7 @@ chmod +x reinstall.sh
 
 **Giải thích các tùy chọn trong ví dụ:**
 
-- ✅ **`--password "Khoa@@201911"`**: Đặt mật khẩu cho tài khoản Administrator. Mật khẩu sẽ được mã hóa base64 trong autounattend.xml. Nếu không chỉ định, script sẽ tạo mật khẩu ngẫu nhiên và hiển thị trong log.
+- ✅ **`--password "CoConCac975@"`**: Đặt mật khẩu cho tài khoản Administrator. Mật khẩu sẽ được mã hóa base64 trong autounattend.xml. Nếu không chỉ định, script sẽ tạo mật khẩu ngẫu nhiên và hiển thị trong log.
 
 - ✅ **`--rdp-port 6969`**: Thay đổi cổng RDP từ 3389 (mặc định) sang 6969. Hữu ích để tránh scan port hoặc khi cổng 3389 bị chặn.
 
@@ -126,6 +126,49 @@ chmod +x reinstall.sh
   - Và các file khác khi cần thiết
 - ✅ Script tự động phát hiện vị trí địa lý và chọn mirror phù hợp (GitHub hoặc mirror Trung Quốc)
 - ✅ Đảm bảo có kết nối Internet ổn định để script tải các file cần thiết
+
+---
+
+## ✨ Tính năng mới
+
+### 🎯 Tự động lấy direct link từ buzzheavier.com
+
+Script giờ đã hỗ trợ **tự động lấy direct link** từ buzzheavier.com! 
+
+**Cách hoạt động:**
+- Khi script yêu cầu direct link, chỉ cần paste link buzzheavier.com (ví dụ: `https://buzzheavier.com/gc7av6bnndzv`)
+- Script sẽ tự động:
+  1. Phát hiện đây là link buzzheavier.com
+  2. Gửi request đến `/download` endpoint với headers phù hợp
+  3. Lấy header `Hx-Redirect` chứa direct link
+  4. Sử dụng direct link đó để tải ISO
+
+**Lợi ích:**
+- ✅ Không cần mở trình duyệt để lấy direct link
+- ✅ Tự động hóa hoàn toàn quá trình
+- ✅ Tiết kiệm thời gian và công sức
+- ✅ Vẫn có fallback nếu tự động thất bại
+
+**Ví dụ:**
+```bash
+Direct Link: https://buzzheavier.com/gc7av6bnndzv
+# Script tự động chuyển thành direct link và tiếp tục tải ISO
+```
+
+### 📊 Theo dõi tiến trình realtime
+
+Script hỗ trợ theo dõi tiến trình cài đặt realtime qua web dashboard:
+
+- **Backend server**: Chạy trên port 8080 (mặc định)
+- **Web dashboard**: Truy cập `http://your-server-ip:8080`
+- **Tính năng**:
+  - Hiển thị tiến độ realtime với progress bar
+  - Logs chi tiết với timestamps
+  - Thông báo toast khi có cập nhật
+  - Thống kê: tiến độ, số log, thời gian
+  - Tự động kết nối lại khi mất kết nối
+
+Xem thêm chi tiết ở phần [Theo dõi quá trình cài đặt](#-cách-theo-dõi-quá-trình-cài-đặt).
 
 ---
 
@@ -449,7 +492,27 @@ Please open https://buzzheavier.com/xxx in browser to get the direct link and pa
 Direct Link: 
 ```
 
-**Cách lấy direct link:**
+**✨ Tính năng mới: Tự động lấy direct link từ buzzheavier.com**
+
+Script giờ đã hỗ trợ **tự động lấy direct link** từ buzzheavier.com! 
+
+**Cách sử dụng:**
+- Chỉ cần paste link buzzheavier.com vào (ví dụ: `https://buzzheavier.com/gc7av6bnndzv`)
+- Script sẽ tự động:
+  1. Phát hiện đây là link buzzheavier.com
+  2. Gửi request đến endpoint `/download` với headers phù hợp
+  3. Lấy header `Hx-Redirect` chứa direct link
+  4. Sử dụng direct link đó để tải ISO
+
+**Ví dụ:**
+```bash
+Direct Link: https://buzzheavier.com/gc7av6bnndzv
+# Script tự động chuyển thành:
+# https://trashbytes.net/dl/Pg5GpTm0KwdidmL14FonZpFJfduA_1Xo0A0imwwRhijJK6GAcSKr_b6GB_gNTINzAWDRfRaQIvE4Z1Cxbwy8h2M2BlAv8TbKgy3FS5puDq_xvGn1vJSzblhcsG70loX72lOO7RLB3o9HPG9J-bEA3lfKSRqjVwKbkU8MpXTtIS9K9GQ?v=...
+```
+
+**Nếu tự động thất bại, bạn có thể lấy direct link thủ công:**
+
 1. Mở link trong trình duyệt (ví dụ: `https://buzzheavier.com/xxx`)
 2. Đợi trang load, thường sẽ tự động bắt đầu download
 3. Nếu có nút download, click chuột phải → "Copy link address"
@@ -851,16 +914,39 @@ Nếu máy chủ cần driver đặc biệt:
    Direct Link: 
    ```
 
-2. **Cách lấy direct link:**
+2. **✨ Cách 1: Tự động lấy direct link (Khuyến nghị - Tính năng mới!)**
    
-   **Cách 1: Dùng trình duyệt (Khuyến nghị)**
+   Script giờ đã hỗ trợ **tự động lấy direct link** từ buzzheavier.com!
+   
+   **Chỉ cần paste link buzzheavier.com:**
+   ```bash
+   Direct Link: https://buzzheavier.com/gc7av6bnndzv
+   ```
+   
+   Script sẽ tự động:
+   - Phát hiện đây là link buzzheavier.com
+   - Gửi request đến `/download` endpoint với headers phù hợp
+   - Lấy header `Hx-Redirect` chứa direct link
+   - Sử dụng direct link đó để tải ISO
+   
+   **Thông báo khi thành công:**
+   ```
+   ***** ĐANG THỬ TỰ ĐỘNG LẤY DIRECT LINK TỪ BUZZHEAVIER.COM... *****
+   ***** TRYING TO AUTOMATICALLY GET DIRECT LINK FROM BUZZHEAVIER.COM... *****
+   ***** ĐÃ LẤY ĐƯỢC DIRECT LINK TỰ ĐỘNG! *****
+   ***** SUCCESSFULLY GOT DIRECT LINK AUTOMATICALLY! *****
+   ```
+   
+   **Nếu tự động thất bại**, script sẽ yêu cầu bạn nhập thủ công.
+
+3. **Cách 2: Dùng trình duyệt (Nếu tự động thất bại)**
    - Mở link trong trình duyệt (ví dụ: `https://buzzheavier.com/gc7av6bnndzv`)
    - Đợi trang load và bắt đầu download tự động
    - Click chuột phải vào nút download (nếu có) → "Copy link address"
    - Hoặc dùng Developer Tools (F12) → Network tab → Tìm request có file `.iso`
    - Copy link đó và paste vào terminal
 
-   **Cách 2: Dùng wget/curl để lấy redirect**
+4. **Cách 3: Dùng wget/curl để lấy redirect**
    ```bash
    # Xem redirect cuối cùng
    curl -I -L "https://buzzheavier.com/gc7av6bnndzv" | grep -i location
@@ -869,7 +955,7 @@ Nếu máy chủ cần driver đặc biệt:
    wget --spider --server-response "https://buzzheavier.com/gc7av6bnndzv" 2>&1 | grep -i location
    ```
 
-   **Cách 3: Dùng `--iso` với link khác**
+5. **Cách 4: Dùng `--iso` với link khác**
    - Tìm ISO từ nguồn khác (Microsoft, TechBench, etc.)
    - Dùng `--iso` để chỉ định trực tiếp:
      ```bash
@@ -882,7 +968,7 @@ Nếu máy chủ cần driver đặc biệt:
        --allow-ping
      ```
 
-3. **Lưu ý:** Direct link thường có định dạng:
+6. **Lưu ý:** Direct link thường có định dạng:
    - Kết thúc bằng `.iso` hoặc `.img`
    - Khi truy cập trực tiếp sẽ bắt đầu download file ngay
    - Không phải trang HTML
@@ -1010,7 +1096,7 @@ reboot
 
 **A:** 
 - Script là mã nguồn mở, bạn có thể xem code
-- Tải từ GitHub chính thức: https://github.com/bin456789/reinstall
+- Tải từ GitHub chính thức: https://github.com/yanteams/windows-installer
 - Không tải từ nguồn không rõ nguồn gốc
 
 ---
@@ -1033,7 +1119,7 @@ reboot
 
 ## 🔗 Tài liệu tham khảo
 
-- **GitHub Repository:** https://github.com/bin456789/reinstall
+- **GitHub Repository:** https://github.com/yanteams/windows-installer
 - **Massgrave.dev:** https://massgrave.dev (Nguồn ISO Windows)
 - **Hướng dẫn đầy đủ:** Chạy `./reinstall.sh --help`
 
@@ -1045,7 +1131,7 @@ Nếu gặp vấn đề:
 
 1. Xem log: `/reinstall.log`
 2. Chạy với `--debug` để xem chi tiết
-3. Tạo issue trên GitHub: https://github.com/bin456789/reinstall/issues
+3. Tạo issue trên GitHub: https://github.com/yanteams/windows-installer/issues
 4. Kiểm tra FAQ ở trên
 
 ---

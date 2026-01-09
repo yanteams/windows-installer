@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
-# nixos 默认的配置不会生成 /bin/bash
+# nixos cấu hình mặc định không tạo /bin/bash
 # shellcheck disable=SC2086
 
 set -eE
-confhome=https://raw.githubusercontent.com/bin456789/reinstall/main
-confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/main
-# confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/bin456789/reinstall/main
+confhome=https://raw.githubusercontent.com/yanteams/windows-installer/main
+confhome_cn=https://cnb.cool/yanteams/windows-installer/-/git/raw/main
+# confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/yanteams/windows-installer/main
 
-# 用于判断 reinstall.sh 和 trans.sh 是否兼容
+# Dùng để kiểm tra reinstall.sh và trans.sh có tương thích không
 SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
 
-# 记录要用到的 windows 程序，运行时输出删除 \r
+# Ghi lại các chương trình windows cần dùng, khi chạy xóa \r trong output
 WINDOWS_EXES='cmd powershell wmic reg diskpart netsh bcdedit mountvol'
 
-# 强制 linux 程序输出英文，防止 grep 不到想要的内容
+# Buộc chương trình linux xuất tiếng Anh, tránh grep không tìm thấy nội dung mong muốn
 # https://www.gnu.org/software/gettext/manual/html_node/The-LANGUAGE-variable.html
 export LC_ALL=C
 
-# 处理部分用户用 su 切换成 root 导致环境变量没 sbin 目录
-# 也能处理 cygwin bash 没有添加 -l 运行 reinstall.sh
-# 不要漏了最后的 $PATH，否则会找不到 windows 系统程序例如 diskpart
+# Xử lý trường hợp một số người dùng dùng su chuyển sang root khiến biến môi trường thiếu thư mục sbin
+# Cũng xử lý cygwin bash không thêm -l khi chạy reinstall.sh
+# Không được bỏ sót $PATH cuối cùng, nếu không sẽ không tìm thấy chương trình hệ thống windows như diskpart
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 
-# 如果不是 bash 的话，继续执行会有语法错误，因此在这里判断是否 bash
+# Nếu không phải bash thì tiếp tục chạy sẽ có lỗi cú pháp, do đó kiểm tra xem có phải bash không ở đây
 if [ -z "$BASH" ]; then
     if [ -f /etc/alpine-release ]; then
         if ! apk add bash; then
@@ -38,7 +38,7 @@ if [ -z "$BASH" ]; then
     fi
 fi
 
-# 记录日志，过滤含有 password 的行
+# Ghi lại nhật ký, lọc các dòng chứa password
 exec > >(tee >(grep -iv password >>/reinstall.log)) 2>&1
 THIS_SCRIPT=$(readlink -f "$0")
 trap 'trap_err $LINENO $?' ERR
@@ -94,7 +94,7 @@ Usage: $reinstall_____ anolis      7|8|23
                        [--rdp-port   PORT]
                        [--add-driver INF_OR_DIR]
 
-Manual: https://github.com/bin456789/reinstall
+Manual: https://github.com/yanteams/windows-installer
 
 EOF
     exit 1
@@ -109,6 +109,7 @@ info() {
         msg="***** $(to_upper <<<"$*") *****"
     fi
     echo_color_text '\e[32m' "$msg" >&2
+    report_progress "$msg" "" "" "$msg"
 }
 
 warn() {
@@ -120,11 +121,35 @@ warn() {
         msg="Warning: $*"
     fi
     echo_color_text '\e[33m' "$msg" >&2
+    report_progress "" "" "" "$msg"
 }
 
 error() {
     echo_color_text '\e[31m' "***** ERROR *****" >&2
     echo_color_text '\e[31m' "$*" >&2
+    report_progress "" "" "error" "$*"
+}
+
+# Progress reporting function
+report_progress() {
+    local step="$1"
+    local progress="$2"
+    local status="$3"
+    local message="$4"
+    
+    # Only report if progress server is available
+    if [ -n "$PROGRESS_PORT" ] && command -v curl >/dev/null 2>&1; then
+        local url="http://localhost:${PROGRESS_PORT}/api/progress"
+        local payload="{\"step\":\"$step\""
+        [ -n "$progress" ] && payload="${payload},\"progress\":$progress"
+        [ -n "$status" ] && payload="${payload},\"status\":\"$status\""
+        [ -n "$message" ] && payload="${payload},\"message\":\"$message\""
+        payload="${payload}}"
+        
+        curl -s -X POST "$url" \
+            -H "Content-Type: application/json" \
+            -d "$payload" >/dev/null 2>&1 || true
+    fi
 }
 
 echo_color_text() {
@@ -144,8 +169,8 @@ show_dd_password_tips() {
 This password is only used for SSH access to view logs during the installation.
 Password of the image will NOT modify.
 
-密码仅用于安装过程中通过 SSH 查看日志。
-镜像的密码不会被修改。
+Mật khẩu chỉ dùng để truy cập SSH xem nhật ký trong quá trình cài đặt.
+Mật khẩu của image sẽ KHÔNG bị thay đổi.
 "
 }
 
@@ -161,19 +186,19 @@ show_url_in_args() {
 curl() {
     is_have_cmd curl || install_pkg curl
 
-    # 显示 url
+    # Hiển thị url
     show_url_in_args "$@" >&2
 
-    # 添加 -f, --fail，不然 404 退出码也为0
-    # 32位 cygwin 已停止更新，证书可能有问题，先添加 --insecure
-    # centos 7 curl 不支持 --retry-connrefused --retry-all-errors
-    # 因此手动 retry
+    # Thêm -f, --fail, nếu không mã thoát 404 cũng là 0
+    # cygwin 32 bit đã ngừng cập nhật, chứng chỉ có thể có vấn đề, thêm --insecure trước
+    # centos 7 curl không hỗ trợ --retry-connrefused --retry-all-errors
+    # Do đó thử lại thủ công
     for i in $(seq 5); do
         if command curl --insecure --connect-timeout 10 -f "$@"; then
             return
         else
             ret=$?
-            # 403 404 错误，或者达到重试次数
+            # Lỗi 403 404, hoặc đạt số lần thử lại
             if [ $ret -eq 22 ] || [ $i -eq 5 ]; then
                 return $ret
             fi
@@ -193,13 +218,13 @@ is_in_china() {
     [ "$force_cn" = 1 ] && return 0
 
     if [ -z "$_loc" ]; then
-        # www.cloudflare.com/dash.cloudflare.com 国内访问的是美国服务器，而且部分地区被墙
-        # 没有ipv6 www.visa.cn
-        # 没有ipv6 www.bose.cn
-        # 没有ipv6 www.garmin.com.cn
-        # 备用 www.prologis.cn
-        # 备用 www.autodesk.com.cn
-        # 备用 www.keysight.com.cn
+        # www.cloudflare.com/dash.cloudflare.com truy cập từ trong nước là server Mỹ, và một số khu vực bị chặn
+        # không có ipv6 www.visa.cn
+        # không có ipv6 www.bose.cn
+        # không có ipv6 www.garmin.com.cn
+        # dự phòng www.prologis.cn
+        # dự phòng www.autodesk.com.cn
+        # dự phòng www.keysight.com.cn
         if ! _loc=$(curl -L http://www.qualcomm.cn/cdn-cgi/trace | grep '^loc=' | cut -d= -f2 | grep .); then
             error_and_exit "Can not get location."
         fi
@@ -246,9 +271,9 @@ get_os_part() {
 }
 
 umount_all() {
-    # windows defender 打开时，cygwin 运行 mount 很慢，但 cat /proc/mounts 很快
+    # Khi windows defender bật, cygwin chạy mount rất chậm, nhưng cat /proc/mounts rất nhanh
     if mount_lists=$(mount | grep -w "on $1" | awk '{print $3}' | grep .); then
-        # alpine 没有 -R
+        # alpine không có -R
         if umount --help 2>&1 | grep -wq -- '-R'; then
             umount -R "$1"
         else
@@ -270,9 +295,9 @@ is_host_has_ipv4_and_ipv6() {
     host=$1
 
     install_pkg dig
-    # dig会显示cname结果，cname结果以.结尾，grep -v '\.$' 用于去除 cname 结果
+    # dig sẽ hiển thị kết quả cname, kết quả cname kết thúc bằng ., grep -v '\.$' dùng để loại bỏ kết quả cname
     res=$(dig +short $host A $host AAAA | grep -v '\.$')
-    # 有.表示有ipv4地址，有:表示有ipv6地址
+    # Có . nghĩa là có địa chỉ ipv4, có : nghĩa là có địa chỉ ipv6
     grep -q \. <<<$res && grep -q : <<<$res
 }
 
@@ -323,7 +348,7 @@ insert_into_file() {
         error_and_exit "File not found: $file"
     fi
 
-    # 默认 grep -E
+    # Mặc định grep -E
     if [ $# -eq 0 ]; then
         set -- -E
     fi
@@ -366,12 +391,12 @@ test_url_real() {
 
     tmp_file=$tmp/img-test
 
-    # TODO: 好像无法识别 nixos 官方源的跳转
-    # 有的服务器不支持 range，curl会下载整个文件
-    # 所以用 head 限制 1M
-    # 过滤 curl 23 错误（head 限制了大小）
-    # 也可用 ulimit -f 但好像 cygwin 不支持
-    # ${PIPESTATUS[n]} 表示第n个管道的返回值
+    # TODO: Có vẻ không thể nhận diện redirect của nguồn chính thức nixos
+    # Một số server không hỗ trợ range, curl sẽ tải toàn bộ file
+    # Do đó dùng head giới hạn 1M
+    # Lọc lỗi curl 23 (head đã giới hạn kích thước)
+    # Cũng có thể dùng ulimit -f nhưng có vẻ cygwin không hỗ trợ
+    # ${PIPESTATUS[n]} biểu thị giá trị trả về của pipeline thứ n
     echo $url
     for i in $(seq 5 -1 0); do
         if command curl --insecure --connect-timeout 10 -Lfr 0-1048575 "$url" \
@@ -384,16 +409,16 @@ test_url_real() {
             case $ret in
             22)
                 # 403 404
-                # 这里的 failed 虽然返回 1，但是不会中断脚本，因此要手动 return
+                # failed ở đây mặc dù trả về 1, nhưng không làm gián đoạn script, do đó cần return thủ công
                 failed "$msg"
                 return "$ret"
                 ;;
             23)
-                # 限制了空间
+                # Đã giới hạn không gian
                 break
                 ;;
             *)
-                # 其他错误
+                # Lỗi khác
                 if [ $i -eq 0 ]; then
                     failed "$msg"
                     return "$ret"
@@ -404,16 +429,16 @@ test_url_real() {
         fi
     done
 
-    # 如果要检查文件类型
+    # Nếu cần kiểm tra loại file
     if [ -n "$expect_types" ]; then
         install_pkg file
         real_type=$(file_enhanced $tmp_file)
         echo "File type: $real_type"
 
-        # debian 9 ubuntu 16.04-20.04 可能会将 iso 识别成 raw
+        # debian 9 ubuntu 16.04-20.04 có thể nhận diện iso thành raw
         for type in $expect_types $([ "$expect_types" = iso ] && echo raw); do
             if [[ ."$real_type" = *."$type" ]]; then
-                # 如果要设置变量
+                # Nếu cần đặt biến
                 if [ -n "$var_to_eval" ]; then
                     IFS=. read -r "${var_to_eval?}" "${var_to_eval}_warp" <<<"$real_type"
                 fi
@@ -428,37 +453,37 @@ Actually type: $real_type"
 }
 
 fix_file_type() {
-    # gzip的mime有很多种写法
-    # centos7中显示为 x-gzip，在其他系统中显示为 gzip，可能还有其他
-    # 所以不用mime判断
+    # mime của gzip có nhiều cách viết
+    # centos7 hiển thị là x-gzip, trong các hệ thống khác hiển thị là gzip, có thể còn cách khác
+    # Do đó không dùng mime để phán đoán
     # https://www.digipres.org/formats/sources/tika/formats/#application/gzip
 
-    # centos 7 上的 file 显示 qcow2 的 mime 为 application/octet-stream
+    # file trên centos 7 hiển thị mime của qcow2 là application/octet-stream
     # file debian-12-genericcloud-amd64.qcow2
     # debian-12-genericcloud-amd64.qcow2: QEMU QCOW Image (v3), 2147483648 bytes
     # file --mime debian-12-genericcloud-amd64.qcow2
     # debian-12-genericcloud-amd64.qcow2: application/octet-stream; charset=binary
 
-    # --extension 不靠谱
+    # --extension không đáng tin
     # file -b /reinstall-tmp/img-test --mime-type
     # application/x-qemu-disk
     # file -b /reinstall-tmp/img-test --extension
     # ???
 
-    # 1. 删除,;#
+    # 1. Xóa ,;#
     # DOS/MBR boot sector; partition 1: ...
     # gzip compressed data, was ...
-    # # ISO 9660 CD-ROM filesystem data... (有些 file 版本开头输出有井号)
+    # # ISO 9660 CD-ROM filesystem data... (một số phiên bản file có dấu # ở đầu output)
 
-    # 2. 删除开头的空格
+    # 2. Xóa khoảng trắng ở đầu
 
-    # 3. 删除无意义的单词 POSIX, Unicode, UTF-8, ASCII
+    # 3. Xóa các từ vô nghĩa POSIX, Unicode, UTF-8, ASCII
     # POSIX tar archive (GNU)
     # Unicode text, UTF-8 text
     # UTF-8 Unicode text, with very long lines
     # ASCII text
 
-    # 4. 下面两种都是 raw
+    # 4. Hai loại sau đều là raw
     # DOS/MBR boot sector
     # x86 boot sector; partition 1: ...
     sed -E \
@@ -472,13 +497,13 @@ fix_file_type() {
         awk '{print $1}' | to_lower
 }
 
-# 不用 file -z，因为
-# 1. file -z 只能看透一层
-# 2. alpine file -z 无法看透部分镜像（前1M），例如：
+# Không dùng file -z, vì
+# 1. file -z chỉ có thể xem qua một lớp
+# 2. alpine file -z không thể xem qua một số image (1M đầu), ví dụ:
 # guajibao-win10-ent-ltsc-2021-x64-cn-efi.vhd.gz
 # guajibao-win7-sp1-ent-x64-cn-efi.vhd.gz
 # win7-ent-sp1-x64-cn-efi.vhd.gz
-# 还要注意 centos 7 没有 -Z 只有 -z
+# Còn lưu ý centos 7 không có -Z chỉ có -z
 file_enhanced() {
     file=$1
 
@@ -494,7 +519,7 @@ file_enhanced() {
             ;;
         tar)
             install_pkg "$type"
-            # 隐藏 gzip: unexpected end of file 提醒
+            # Ẩn cảnh báo gzip: unexpected end of file
             tar xf "$file" -O 2>/dev/null | head -c 1048576 >"$file.inside"
             mv -f "$file.inside" "$file"
             ;;
@@ -510,7 +535,7 @@ file_enhanced() {
 add_community_repo_for_alpine() {
     local alpine_ver
 
-    # 先检查原来的repo是不是egde
+    # Kiểm tra xem repo ban đầu có phải là edge không
     if grep -q '^http.*/edge/main$' /etc/apk/repositories; then
         alpine_ver=edge
     else
@@ -541,10 +566,10 @@ assert_not_in_container() {
     fi
 }
 
-# 使用 | del_br ，但返回 del_br 之前返回值
+# Dùng | del_br, nhưng trả về giá trị trước del_br
 run_with_del_cr() {
     if false; then
-        # ash 不支持 PIPESTATUS[n]
+        # ash không hỗ trợ PIPESTATUS[n]
         res=$("$@") && ret=0 || ret=$?
         echo "$res" | del_cr
         return $ret
@@ -564,19 +589,19 @@ run_with_del_cr_template() {
 
 wmic() {
     if is_have_cmd wmic; then
-        # 如果参数没有 GET，添加 GET，防止以下报错
+        # Nếu tham số không có GET, thêm GET, tránh lỗi sau
         # wmic memorychip /format:list
-        # 此级别的开关异常。
+        # Công tắc cấp độ này bất thường.
         has_get=false
         for i in "$@"; do
-            # 如果参数有 GET
+            # Nếu tham số có GET
             if [ "$(to_upper <<<"$i")" = GET ]; then
                 has_get=true
                 break
             fi
         done
 
-        # 输出为 /format:list 格式
+        # Output theo định dạng /format:list
         if $has_get; then
             command wmic "$@" /format:list
         else
@@ -585,7 +610,7 @@ wmic() {
         return
     fi
 
-    # powershell wmi 默认参数
+    # Tham số mặc định powershell wmi
     local namespace='root\cimv2'
     local class=
     local filter=
@@ -593,7 +618,7 @@ wmic() {
 
     # namespace
     if [[ "$(to_upper <<<"$1")" = /NAMESPACE* ]]; then
-        # 删除引号，删除 \\
+        # Xóa dấu ngoặc kép, xóa \\
         namespace=$(cut -d: -f2 <<<"$1" | sed -e "s/[\"']//g" -e 's/\\\\//g')
         shift
     fi
@@ -649,12 +674,12 @@ is_virt() {
                 fi
             done
 
-            # 用运行 windows ，肯定够内存运行 alpine lts netboot
-            # 何况还能停止 modloop
+            # Dùng chạy windows, chắc chắn đủ bộ nhớ để chạy alpine lts netboot
+            # Hơn nữa còn có thể dừng modloop
 
-            # 没有风扇和温度信息，大概是虚拟机
-            # 阿里云 倚天710 arm 有温度传感器
-            # ovh KS-LE-3 没有风扇和温度信息？
+            # Không có thông tin quạt và nhiệt độ, có lẽ là máy ảo
+            # Aliyun Yitian 710 arm có cảm biến nhiệt độ
+            # ovh KS-LE-3 không có thông tin quạt và nhiệt độ?
             if false && [ -z "$_is_virt" ] &&
                 ! wmic /namespace:'\\root\cimv2' PATH Win32_Fan 2>/dev/null | grep -q ^Name &&
                 ! wmic /namespace:'\\root\wmi' PATH MSAcpi_ThermalZoneTemperature 2>/dev/null | grep -q ^Name; then
@@ -662,17 +687,17 @@ is_virt() {
             fi
         else
             # aws t4g debian 11
-            # systemd-detect-virt: 为 none，即使装了dmidecode
-            # virt-what: 未装 deidecode时结果为空，装了deidecode后结果为aws
-            # 所以综合两个命令的结果来判断
+            # systemd-detect-virt: là none, dù đã cài dmidecode
+            # virt-what: khi chưa cài dmidecode kết quả rỗng, sau khi cài dmidecode kết quả là aws
+            # Do đó tổng hợp kết quả của hai lệnh để phán đoán
             if is_have_cmd systemd-detect-virt && systemd-detect-virt -v; then
                 _is_virt=true
             fi
 
             if [ -z "$_is_virt" ]; then
-                # debian 安装 virt-what 不会自动安装 dmidecode，因此结果有误
+                # debian cài virt-what không tự động cài dmidecode, do đó kết quả sai
                 install_pkg dmidecode virt-what
-                # virt-what 返回值始终是0，所以用是否有输出作为判断
+                # virt-what giá trị trả về luôn là 0, do đó dùng xem có output không để phán đoán
                 if [ -n "$(virt-what)" ]; then
                     _is_virt=true
                 fi
@@ -688,22 +713,22 @@ is_virt() {
 }
 
 is_absolute_path() {
-    # 检查路径是否以/开头
-    # 注意语法和 ash 不同
+    # Kiểm tra đường dẫn có bắt đầu bằng / không
+    # Lưu ý cú pháp khác với ash
     [[ "$1" = /* ]]
 }
 
 is_cpu_supports_x86_64_v3() {
-    # 用 ld.so/cpuid/coreinfo.exe 更准确
-    # centos 7 /usr/lib64/ld-linux-x86-64.so.2 没有 --help
-    # alpine gcompat /lib/ld-linux-x86-64.so.2 没有 --help
+    # Dùng ld.so/cpuid/coreinfo.exe chính xác hơn
+    # centos 7 /usr/lib64/ld-linux-x86-64.so.2 không có --help
+    # alpine gcompat /lib/ld-linux-x86-64.so.2 không có --help
 
     # https://en.wikipedia.org/wiki/X86-64#Microarchitecture_levels
     # https://learn.microsoft.com/sysinternals/downloads/coreinfo
 
     # abm = popcnt + lzcnt
-    # /proc/cpuinfo 不显示 lzcnt, 可用 abm 代替，但 cygwin 也不显示 abm
-    # /proc/cpuinfo 不显示 osxsave, 故用 xsave 代替
+    # /proc/cpuinfo không hiển thị lzcnt, có thể dùng abm thay thế, nhưng cygwin cũng không hiển thị abm
+    # /proc/cpuinfo không hiển thị osxsave, do đó dùng xsave thay thế
 
     need_flags="avx avx2 bmi1 bmi2 f16c fma movbe xsave"
     had_flags=$(grep -m 1 ^flags /proc/cpuinfo | awk -F': ' '{print $2}')
@@ -721,24 +746,24 @@ assert_cpu_supports_x86_64_v3() {
     fi
 }
 
-# sr-latn-rs 到 sr-latn
+# sr-latn-rs thành sr-latn
 en_us() {
     echo "$lang" | awk -F- '{print $1"-"$2}'
 
-    # zh-hk 可回落到 zh-tw
+    # zh-hk có thể fallback về zh-tw
     if [ "$lang" = zh-hk ]; then
         echo zh-tw
     fi
 }
 
-# fr-ca 到 ca
+# fr-ca thành ca
 us() {
-    # 葡萄牙准确对应 pp
+    # Bồ Đào Nha tương ứng chính xác với pp
     if [ "$lang" = pt-pt ]; then
         echo pp
         return
     fi
-    # 巴西准确对应 pt
+    # Brazil tương ứng chính xác với pt
     if [ "$lang" = pt-br ]; then
         echo pt
         return
@@ -746,25 +771,25 @@ us() {
 
     echo "$lang" | awk -F- '{print $2}'
 
-    # hk 额外回落到 tw
+    # hk fallback thêm về tw
     if [ "$lang" = zh-hk ]; then
         echo tw
     fi
 }
 
-# fr-ca 到 fr-fr
+# fr-ca thành fr-fr
 en_en() {
     echo "$lang" | awk -F- '{print $1"-"$1}'
 
-    # en-gb 额外回落到 en-us
+    # en-gb fallback thêm về en-us
     if [ "$lang" = en-gb ]; then
         echo en-us
     fi
 }
 
-# fr-ca 到 fr
+# fr-ca thành fr
 en() {
-    # 巴西/葡萄牙回落到葡萄牙语
+    # Brazil/Bồ Đào Nha fallback về tiếng Bồ Đào Nha
     if [ "$lang" = pt-br ] || [ "$lang" = pt-pt ]; then
         echo "pp"
         return
@@ -859,7 +884,7 @@ is_have_arm_version() {
         case "$edition" in
         home | 'home single language' | pro | education | enterprise | 'pro education' | 'pro for workstations') return ;;
         'iot enterprise') return ;;
-        # arm ltsc 只有 2021 有 iso
+                # arm ltsc chỉ có 2021 có iso
         'enterprise ltsc 2021' | 'iot enterprise ltsc 2021') return ;;
         esac
         ;;
@@ -901,7 +926,7 @@ get_windows_iso_link() {
                 serverdatacenter | serverdatacentercore) echo _ ;;
                 esac
                 ;;
-            # massgrave 不提供 2012 下载
+            # massgrave không cung cấp tải xuống 2012
             '2012 r2' | \
                 2016 | 2019 | 2022 | 2025)
                 case "$edition" in
@@ -952,7 +977,7 @@ get_windows_iso_link() {
                 education | 'pro education' | 'pro for workstations')
                     case "$arch_win" in
                     arm64) echo consumer ;;
-                    x64) echo business ;; # iso 更小
+                    x64) echo business ;; # iso nhỏ hơn
                     esac
                     ;;
                 # iot
@@ -962,7 +987,7 @@ get_windows_iso_link() {
                 # ltsc
                 'enterprise 2015 ltsb' | 'enterprise 2016 ltsb' | 'enterprise ltsc 2019') echo "$edition" ;;
                 'enterprise ltsc 2021')
-                    # arm64 的 enterprise ltsc 2021 要下载 iot enterprise ltsc 2021 iso
+                    # arm64 của enterprise ltsc 2021 cần tải iot enterprise ltsc 2021 iso
                     case "$arch_win" in
                     arm64) echo 'iot enterprise ltsc 2021' ;;
                     x86 | x64) echo 'enterprise ltsc 2021' ;;
@@ -971,8 +996,8 @@ get_windows_iso_link() {
                 esac
                 ;;
             11)
-                # arm business iso 都没有 education, pro education, pro for workstations
-                # 即使它的名字包含 EDU
+                # arm business iso đều không có education, pro education, pro for workstations
+                # Dù tên của nó có chứa EDU
                 # SW_DVD9_Win_Pro_10_22H2.31_Arm64_English_Pro_Ent_EDU_N_MLF_X24-05074.ISO
                 # en-us_windows_11_business_editions_version_25h2_arm64_dvd_8afc9b39.iso
                 case "$edition" in
@@ -981,7 +1006,7 @@ get_windows_iso_link() {
                 education | 'pro education' | 'pro for workstations')
                     case "$arch_win" in
                     arm64) echo consumer ;;
-                    x64) echo business ;; # iso 更小
+                    x64) echo business ;; # iso nhỏ hơn
                     esac
                     ;;
                 # iot
@@ -990,7 +1015,7 @@ get_windows_iso_link() {
                 'iot enterprise ltsc 2024' | 'iot enterprise subscription ltsc 2024') echo 'iot enterprise ltsc 2024' ;;
                 # ltsc
                 'enterprise ltsc 2024')
-                    # arm64 的 enterprise ltsc 2024 要下载 iot enterprise ltsc 2024 iso
+                    # arm64 của enterprise ltsc 2024 cần tải iot enterprise ltsc 2024 iso
                     case "$arch_win" in
                     arm64) echo 'iot enterprise ltsc 2024' ;;
                     x64) echo 'enterprise ltsc 2024' ;;
@@ -1012,11 +1037,11 @@ get_windows_iso_link() {
         esac
     }
 
-    # msdl 没有每月发布的 iso
-    # msdl 只有 consumer 版本，因此里面的 pro 版本不是 vl 版
-    # 8.1 没有每月发布的 iso，因此优先从 msdl 下载
-    # win10 22h2 arm 有每月发布的 iso，因此不从 msdl 下载
-    # win10/11 ltsc 没有每月发布的 iso，但是 msdl 没有 ltsc 版本
+    # msdl không có iso phát hành hàng tháng
+    # msdl chỉ có phiên bản consumer, do đó phiên bản pro trong đó không phải là vl
+    # 8.1 không có iso phát hành hàng tháng, do đó ưu tiên tải từ msdl
+    # win10 22h2 arm có iso phát hành hàng tháng, do đó không tải từ msdl
+    # win10/11 ltsc không có iso phát hành hàng tháng, nhưng msdl không có phiên bản ltsc
     get_label_msdl() {
         case "$version" in
         8.1)
@@ -1047,7 +1072,7 @@ get_windows_iso_link() {
         grep -Ewq 'ltsb|ltsc' <<<"$edition"
     }
 
-    # 部分 bash 不支持 $() 里面嵌套case，所以定义成函数
+    # Một số bash không hỗ trợ case lồng trong $(), do đó định nghĩa thành hàm
     label_msdn=$(get_label_msdn)
     label_msdl=$(get_label_msdl)
     label_vlsc=$(get_label_vlsc)
@@ -1070,10 +1095,10 @@ get_windows_iso_link() {
     echo "List:       $page_url"
     echo
 
-    # 先判断是否能自动查找该版本
-    # 再判断是否支持 arm
-    # 这样可以在输入错误 Edition 时例如 windows 11 enterprise ltsc 2021
-    # 显示名称错误，而不是显示该版本不支持 arm
+    # Trước tiên phán đoán xem có thể tự động tìm phiên bản này không
+    # Sau đó phán đoán xem có hỗ trợ arm không
+    # Như vậy khi nhập sai Edition ví dụ windows 11 enterprise ltsc 2021
+    # Sẽ hiển thị tên sai, thay vì hiển thị phiên bản này không hỗ trợ arm
 
     if [ -z "$page" ] || { [ -z "$label_msdn" ] && [ -z "$label_msdl" ] && [ -z "$label_vlsc" ]; }; then
         error_and_exit "Not support find this iso. Check if --image-name is wrong. Or set --iso manually."
@@ -1087,15 +1112,15 @@ get_windows_iso_link() {
         iso=$(curl -L "$page_url" | grep -ioP 'https://[^ ]+?#[0-9]+' | head -1 | grep .)
     else
         curl -L "$page_url" |
-            tr -d '\n' | sed -e 's,<a ,\n<a ,g' -e 's,</a>,</a>\n,g' |    # 使每个 <a></a> 占一行
-            grep -Ei '\.(iso|img)</a>$' |                                 # 找出是 iso 或 img 的行
-            sed -E 's,<a href="([^"]+)".+>(.+)</a>,\2 \1,' >$tmp/win.list # 提取文件名和链接
+            tr -d '\n' | sed -e 's,<a ,\n<a ,g' -e 's,</a>,</a>\n,g' |    # Làm mỗi <a></a> chiếm một dòng
+            grep -Ei '\.(iso|img)</a>$' |                                 # Tìm các dòng là iso hoặc img
+            sed -E 's,<a href="([^"]+)".+>(.+)</a>,\2 \1,' >$tmp/win.list # Trích xuất tên file và liên kết
 
-        # 如果不是 ltsc ，应该先去除 ltsc 链接，否则最终链接有 ltsc 的
-        # 例如查找 windows 10 iot enterprise，会得到
+        # Nếu không phải ltsc, nên xóa liên kết ltsc trước, nếu không liên kết cuối sẽ có ltsc
+        # Ví dụ tìm windows 10 iot enterprise, sẽ được
         # en-us_windows_10_iot_enterprise_ltsc_2021_arm64_dvd_e8d4fc46.iso
         # en-us_windows_10_iot_enterprise_version_22h2_arm64_dvd_39566b6b.iso
-        # sed -Ei 和 sed -iE 是不同的
+        # sed -Ei và sed -iE là khác nhau
         if is_ltsc; then
             sed -Ei '/ltsc|ltsb/!d' $tmp/win.list
         else
@@ -1177,7 +1202,7 @@ setos() {
     setos_alpine() {
         is_virt && flavour=virt || flavour=lts
 
-        # 不要用https 因为甲骨文云arm initramfs阶段不会从硬件同步时钟，导致访问https出错
+        # Không dùng https vì giai đoạn initramfs của Oracle Cloud arm không đồng bộ đồng hồ từ phần cứng, khiến truy cập https lỗi
         if is_in_china; then
             mirror=http://mirror.nju.edu.cn/alpine/v$releasever
         else
@@ -1198,7 +1223,7 @@ setos() {
             error_and_exit "Debian $releasever ELTS does not support aarch64."
         fi
 
-        # 用此标记要是否 elts, 用于安装后修改 elts/etls-cn 源
+        # Dùng dấu này để đánh dấu có phải elts không, dùng để sửa nguồn elts/etls-cn sau khi cài đặt
         # shellcheck disable=SC2034
         is_debian_elts && elts=1 || elts=0
 
@@ -1217,8 +1242,8 @@ setos() {
 Due to the lack of Debian Freexian ELTS instaler mirrors in China, the installation time may be longer.
 Continue?
 
-由于没有 Debian Freexian ELTS 国内安装源，安装时间可能会比较长。
-继续安装?
+Do không có nguồn cài đặt Debian Freexian ELTS trong nước, thời gian cài đặt có thể khá dài.
+Tiếp tục cài đặt?
 "
             read -r -p '[y/N]: '
             if ! [[ "$REPLY" = [Yy] ]]; then
@@ -1226,24 +1251,24 @@ Continue?
             fi
         fi
 
-        # udeb_mirror 安装时的源
-        # deb_mirror 安装后要修改成的源
+        # udeb_mirror nguồn khi cài đặt
+        # deb_mirror nguồn cần sửa thành sau khi cài đặt
         if is_debian_elts; then
             if is_in_china; then
                 # https://github.com/tuna/issues/issues/1999
-                # nju 也没同步
+                # nju cũng không đồng bộ
                 udeb_mirror=deb.freexian.com/extended-lts
                 deb_mirror=mirror.nju.edu.cn/debian-elts
                 initrd_mirror=mirror.nju.edu.cn/debian-archive/debian
             else
-                # 按道理不应该用官方源，但找不到其他源
+                # Theo lý thuyết không nên dùng nguồn chính thức, nhưng không tìm thấy nguồn khác
                 udeb_mirror=deb.freexian.com/extended-lts
                 deb_mirror=deb.freexian.com/extended-lts
                 initrd_mirror=archive.debian.org/debian
             fi
         else
             if is_in_china; then
-                # ftp.cn.debian.org 不在国内还严重丢包
+                # ftp.cn.debian.org không ở trong nước và mất gói nghiêm trọng
                 # https://www.itdog.cn/ping/ftp.cn.debian.org
                 mirror=mirror.nju.edu.cn/debian
             else
@@ -1254,12 +1279,12 @@ Continue?
             initrd_mirror=$mirror
         fi
 
-        # 云镜像和 firmware 下载源
+        # Nguồn tải xuống cloud image và firmware
         if is_in_china; then
             cdimage_mirror=https://mirror.nju.edu.cn/debian-cdimage
         else
-            cdimage_mirror=https://cdimage.debian.org/images # 在瑞典，不是 cdn
-            # cloud.debian.org 同样在瑞典，不是 cdn
+            cdimage_mirror=https://cdimage.debian.org/images # Ở Thụy Điển, không phải cdn
+            # cloud.debian.org cũng ở Thụy Điển, không phải cdn
         fi
 
         is_virt && flavour=-cloud || flavour=
@@ -1271,8 +1296,8 @@ Continue?
         if is_use_cloud_image; then
             # cloud image
             # https://salsa.debian.org/cloud-team/debian-cloud-images/-/tree/master/config_space/bookworm/files/etc/default/grub.d
-            # cloud 包括各种奇怪的优化，例如不显示 grub 菜单
-            # 因此使用 nocloud
+            # cloud bao gồm nhiều tối ưu hóa lạ, ví dụ không hiển thị menu grub
+            # Do đó dùng nocloud
             if false; then
                 is_virt && ci_type=genericcloud || ci_type=generic
             else
@@ -1280,7 +1305,7 @@ Continue?
             fi
             eval ${step}_img=$cdimage_mirror/cloud/$codename/latest/debian-$releasever-$ci_type-$basearch_alt.qcow2
         else
-            # 传统安装
+            # Cài đặt truyền thống
             initrd_dir=dists/$codename/main/installer-$basearch_alt/current/images/netboot/debian-installer/$basearch_alt
 
             eval ${step}_udeb_mirror=$udeb_mirror
@@ -1291,7 +1316,7 @@ Continue?
             eval ${step}_codename=$codename
         fi
 
-        # 官方安装和云镜像都会用到的
+        # Cả cài đặt chính thức và cloud image đều dùng
         eval ${step}_deb_mirror=$deb_mirror
         eval ${step}_kernel=linux-image$flavour-$basearch_alt
     }
@@ -1300,12 +1325,12 @@ Continue?
         if is_use_cloud_image; then
             :
         else
-            # 传统安装
+            # Cài đặt truyền thống
             if is_in_china; then
                 hostname=mirror.nju.edu.cn
             else
-                # http.kali.org 没有 ipv6 地址
-                # http.kali.org (geoip 重定向) 到 kali.download (cf)
+                # http.kali.org không có địa chỉ ipv6
+                # http.kali.org (geoip redirect) đến kali.download (cf)
                 hostname=kali.download
             fi
             codename=kali-rolling
@@ -1320,7 +1345,7 @@ Continue?
             eval ${step}_udeb_mirror=$hostname/kali
             eval ${step}_codename=$codename
             eval ${step}_kernel=linux-image$flavour-$basearch_alt
-            # 缺少 firmware 下载
+            # Thiếu tải xuống firmware
         fi
     }
 
@@ -1337,7 +1362,7 @@ Continue?
         if is_use_cloud_image; then
             # cloud image
             if is_in_china; then
-                # 有的源没有 releases 镜像
+                # Một số nguồn không có mirror releases
                 # https://mirrors.tuna.tsinghua.edu.cn/ubuntu-cloud-images/releases/
                 #   https://unicom.mirrors.ustc.edu.cn/ubuntu-cloud-images/releases/
                 #            https://mirror.nju.edu.cn/ubuntu-cloud-images/releases/
@@ -1348,9 +1373,9 @@ Continue?
                 ci_mirror=https://cloud-images.ubuntu.com
             fi
 
-            # 以下版本有 minimal 镜像
-            # amd64 所有
-            # arm64 24.04 和以上
+            # Các phiên bản sau có minimal image
+            # amd64 tất cả
+            # arm64 24.04 trở lên
             is_have_minimal_image() {
                 [ "$basearch_alt" = amd64 ] || [ "${releasever%.*}" -ge 24 ]
             }
@@ -1371,11 +1396,11 @@ Continue?
                 fi
                 eval ${step}_img="$ci_mirror/minimal/releases/$codename/release/ubuntu-$releasever-minimal-cloudimg-$basearch_alt$(get_suffix).img"
             else
-                # 用 codename 而不是 releasever，可减少一次跳转
+                # Dùng codename thay vì releasever, có thể giảm một lần redirect
                 eval ${step}_img="$ci_mirror/releases/$codename/release/ubuntu-$releasever-server-cloudimg-$basearch_alt$(get_suffix).img"
             fi
         else
-            # 传统安装
+            # Cài đặt truyền thống
             if is_in_china; then
                 case "$basearch" in
                 "x86_64") mirror=https://mirror.nju.edu.cn/ubuntu-releases/$releasever ;;
@@ -1392,7 +1417,7 @@ Continue?
             filename=$(curl -L $mirror/ | grep -oP "ubuntu-$releasever.*?-live-server-$basearch_alt.iso" |
                 sort -uV | tail -1 | grep .)
             iso=$mirror/$filename
-            # 在 ubuntu 20.04 上，file 命令检测 ubuntu 22.04 iso 结果是 DOS/MBR boot sector
+            # Trên ubuntu 20.04, lệnh file phát hiện ubuntu 22.04 iso kết quả là DOS/MBR boot sector
             test_url "$iso" iso
             eval ${step}_iso=$iso
 
@@ -1413,7 +1438,7 @@ Continue?
             if is_in_china; then
                 mirror=https://mirror.nju.edu.cn/archlinuxarm
             else
-                # https 证书有问题
+                # Chứng chỉ https có vấn đề
                 mirror=http://mirror.archlinuxarm.org # geoip
             fi
         fi
@@ -1422,7 +1447,7 @@ Continue?
             # cloud image
             eval ${step}_img=$mirror/images/latest/Arch-Linux-x86_64-cloudimg.qcow2
         else
-            # 传统安装
+            # Cài đặt truyền thống
             case "$basearch" in
             x86_64) dir="core/os/$basearch" ;;
             aarch64) dir="$basearch/core" ;;
@@ -1442,9 +1467,9 @@ Continue?
         if is_use_cloud_image; then
             :
         else
-            # 传统安装
-            # 该服务器文件缓存 miss 时会响应 206 + Location 头
-            # 但 curl 这种情况不会重定向，所以添加 text 类型让它不要报错
+            # Cài đặt truyền thống
+            # Server này khi file cache miss sẽ phản hồi 206 + Location header
+            # Nhưng curl trong trường hợp này không redirect, do đó thêm loại text để nó không báo lỗi
             test_url $mirror/nixos-$releasever/store-paths.xz 'xz text'
             eval ${step}_mirror=$mirror
         fi
@@ -1460,7 +1485,7 @@ Continue?
         dir=releases/$basearch_alt/autobuilds
 
         if is_use_cloud_image; then
-            # 使用 systemd 且没有 cloud-init
+            # Sử dụng systemd và không có cloud-init
             prefix=di-$basearch_alt-console
             filename=$(curl -L $mirror/$dir/latest-$prefix.txt | grep '.qcow2' | awk '{print $1}' | grep .)
             file=$mirror/$dir/$filename
@@ -1477,13 +1502,13 @@ Continue?
 
     setos_opensuse() {
         # https://download.opensuse.org/
-        # curl 会跳转到最近的镜像源，但可能会被镜像源 block
-        # aria2 会跳转使用 metalink
+        # curl sẽ redirect đến mirror gần nhất, nhưng có thể bị mirror block
+        # aria2 sẽ redirect dùng metalink
 
-        # https://downloadcontent.opensuse.org    # 德国
+        # https://downloadcontent.opensuse.org    # Đức
         # https://downloadcontentcdn.opensuse.org # fastly cdn
 
-        # 很多国内源缺少 aarch64 tumbleweed appliances
+        # Nhiều nguồn trong nước thiếu aarch64 tumbleweed appliances
         #                 https://download.opensuse.org/ports/aarch64/tumbleweed/appliances/
         #          https://mirrors.ustc.edu.cn/opensuse/ports/aarch64/tumbleweed/appliances/
         # https://mirrors.tuna.tsinghua.edu.cn/opensuse/ports/aarch64/tumbleweed/appliances/
@@ -1514,7 +1539,7 @@ Continue?
             # https://src.opensuse.org/openSUSE/Leap-Images/src/branch/leap-16.0/kiwi-templates-Minimal/Minimal.kiwi
             # https://build.opensuse.org/projects/Virtualization:Appliances:Images:openSUSE-Leap-15.6/packages/kiwi-templates-Minimal/files/Minimal.kiwi
             # https://build.opensuse.org/projects/Virtualization:Appliances:Images:openSUSE-Tumbleweed/packages/kiwi-templates-Minimal/files/Minimal.kiwi
-            # 有专门的kvm镜像，openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2，里面没有cloud-init
+            # Có image kvm chuyên dụng, openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2, bên trong không có cloud-init
             # file=openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2
         fi
         eval ${step}_img=$mirror/$dir/$file
@@ -1524,19 +1549,19 @@ Continue?
         auto_find_iso=false
         if [ -z "$iso" ]; then
             auto_find_iso=true
-            # 查找时将 windows longhorn serverdatacenter 改成 windows server 2008 serverdatacenter
+            # Khi tìm kiếm đổi windows longhorn serverdatacenter thành windows server 2008 serverdatacenter
             image_name=${image_name/windows longhorn server/windows server 2008 server}
             echo "iso url is not set. Attempting to find it automatically."
             find_windows_iso
         fi
 
-        # 将上面的 windows server 2008 serverdatacenter 改回 windows longhorn serverdatacenter
-        # 也能纠正用户输入了 windows server 2008 serverdatacenter
-        # 注意 windows server 2008 r2 serverdatacenter 不用改
+        # Đổi lại windows server 2008 serverdatacenter ở trên thành windows longhorn serverdatacenter
+        # Cũng có thể sửa khi người dùng nhập windows server 2008 serverdatacenter
+        # Lưu ý windows server 2008 r2 serverdatacenter không cần đổi
         image_name=${image_name/windows server 2008 server/windows longhorn server}
 
         if [[ "$iso" = magnet:* ]]; then
-            : # 不测试磁力链接
+            : # Không test liên kết magnet
         else
             iso_is_tested=false
             if $auto_find_iso; then
@@ -1554,9 +1579,57 @@ Continue?
 
                     echo "请在浏览器中打开 $iso 获取直链并粘贴到这里。"
                     echo "Please open $iso in browser to get the direct link and paste it here."
-                    IFS= read -r -p "Direct Link: " iso
-                    if [ -z "$iso" ]; then
-                        error_and_exit "ISO Link is empty."
+                    
+                    # Thử tự động lấy direct link từ buzzheavier.com
+                    if echo "$iso" | grep -q "buzzheavier\.com"; then
+                        info "Đang thử tự động lấy direct link từ buzzheavier.com..."
+                        info "Trying to automatically get direct link from buzzheavier.com..."
+                        
+                        # Lấy path từ URL (loại bỏ trailing slash nếu có)
+                        buzzheavier_path=$(echo "$iso" | sed -E 's|https?://[^/]+(.*)|\1|' | sed 's|/$||')
+                        download_url="https://buzzheavier.com${buzzheavier_path}/download"
+                        
+                        # Gửi request GET với headers phù hợp và lấy header Hx-Redirect
+                        # Sử dụng -v để xem headers, nhưng chỉ lấy Hx-Redirect
+                        direct_link=$(curl -s -L "$download_url" \
+                            -H 'accept: */*' \
+                            -H 'accept-language: en-US,en;q=0.5' \
+                            -H "hx-current-url: $iso" \
+                            -H 'hx-request: true' \
+                            -H 'referer: '"$iso" \
+                            -H 'user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36' \
+                            -D - -o /dev/null 2>/dev/null | grep -i '^Hx-Redirect:' | cut -d' ' -f2- | tr -d '\r\n' || true)
+                        
+                        # Nếu không có Hx-Redirect, thử lấy Location header từ redirect
+                        if [ -z "$direct_link" ]; then
+                            direct_link=$(curl -s -L -I "$download_url" \
+                                -H 'accept: */*' \
+                                -H 'accept-language: en-US,en;q=0.5' \
+                                -H "hx-current-url: $iso" \
+                                -H 'hx-request: true' \
+                                -H 'referer: '"$iso" \
+                                -H 'user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36' \
+                                2>/dev/null | grep -i '^Location:' | tail -1 | cut -d' ' -f2- | tr -d '\r\n' || true)
+                        fi
+                        
+                        if [ -n "$direct_link" ]; then
+                            info "Đã lấy được direct link tự động!"
+                            info "Successfully got direct link automatically!"
+                            iso="$direct_link"
+                        else
+                            # Nếu không lấy được, yêu cầu người dùng nhập
+                            warn "Không thể tự động lấy direct link. Vui lòng nhập thủ công."
+                            warn "Cannot automatically get direct link. Please enter manually."
+                            IFS= read -r -p "Direct Link: " iso
+                            if [ -z "$iso" ]; then
+                                error_and_exit "ISO Link is empty."
+                            fi
+                        fi
+                    else
+                        IFS= read -r -p "Direct Link: " iso
+                        if [ -z "$iso" ]; then
+                            error_and_exit "ISO Link is empty."
+                        fi
                     fi
                 fi
             fi
@@ -1565,9 +1638,9 @@ Continue?
                 test_url "$iso" iso
             fi
 
-            # 判断 iso 架构是否兼容
+            # Phán đoán kiến trúc iso có tương thích không
             # https://gitlab.com/libosinfo/osinfo-db/-/tree/main/data/os/microsoft.com?ref_type=heads
-            # uupdump linux 下合成的标签是 ARM64，windows下合成的标签是 A64
+            # uupdump trên linux tổng hợp nhãn là ARM64, trên windows tổng hợp nhãn là A64
             if file -b "$tmp/img-test" | grep -Eq '_(A64|ARM64)'; then
                 iso_arch=arm64
             else
@@ -1580,7 +1653,7 @@ Continue?
             }; then
                 warn "
 The current machine is $basearch, but it seems the ISO is for $iso_arch. Continue?
-当前机器是 $basearch，但 ISO 似乎是 $iso_arch。继续安装?"
+Máy hiện tại là $basearch, nhưng ISO có vẻ là $iso_arch. Tiếp tục cài đặt?"
                 read -r -p '[y/N]: '
                 if ! [[ "$REPLY" = [Yy] ]]; then
                     exit
@@ -1597,23 +1670,23 @@ The current machine is $basearch, but it seems the ISO is for $iso_arch. Continu
 
     # shellcheck disable=SC2154
     setos_dd() {
-        # raw 包含 vhd
+        # raw bao gồm vhd
         test_url $img 'raw raw.gzip raw.xz raw.zstd raw.tar.gzip raw.tar.xz raw.tar.zstd' img_type
 
         if is_efi; then
             install_pkg hexdump
 
-            # openwrt 镜像 efi part type 不是 esp
-            # 因此改成检测 fat?
+            # Image openwrt efi part type không phải esp
+            # Do đó đổi thành phát hiện fat?
             # https://downloads.openwrt.org/releases/23.05.3/targets/x86/64/openwrt-23.05.3-x86-64-generic-ext4-combined-efi.img.gz
 
-            # od 在 coreutils 里面，好像要配合 tr 才能删除空格
-            # hexdump 在 util-linux / bsdmainutils 里面
-            # xxd 要单独安装，el 在 vim-common 里面
+            # od trong coreutils, có vẻ cần kết hợp tr mới xóa được khoảng trắng
+            # hexdump trong util-linux / bsdmainutils
+            # xxd cần cài riêng, el trong vim-common
             # xxd -l $((34 * 4096)) -ps -c 128
 
-            # 仅打印前34个扇区 * 4096字节（按最大的算）
-            # 每行128字节
+            # Chỉ in 34 sector đầu * 4096 byte (tính theo lớn nhất)
+            # Mỗi dòng 128 byte
             hexdump -n $((34 * 4096)) -e '128/1 "%02x" "\n"' -v "$tmp/img-test" >$tmp/img-test-hex
             if grep -q '^28732ac11ff8d211ba4b00a0c93ec93b' $tmp/img-test-hex; then
                 echo 'DD: Image is EFI.'
@@ -1622,8 +1695,8 @@ The current machine is $basearch, but it seems the ISO is for $iso_arch. Continu
                 warn '
 The current machine uses EFI boot, but the DD image seems not an EFI image.
 Continue with DD?
-当前机器使用 EFI 引导，但 DD 镜像可能不是 EFI 镜像。
-继续 DD?'
+Máy hiện tại dùng EFI boot, nhưng DD image có thể không phải EFI image.
+Tiếp tục DD?'
                 read -r -p '[y/N]: '
                 if [[ "$REPLY" = [Yy] ]]; then
                     eval ${step}_confirmed_no_efi=1
@@ -1638,10 +1711,10 @@ Continue with DD?
     }
 
     setos_fnos() {
-        # 系统盘大小
+        # Kích thước ổ hệ thống
         min=8
         default=8
-        echo "请输入系统分区大小，最小 $min GB，但可能无法更新系统。"
+        echo "Vui lòng nhập kích thước phân vùng hệ thống, tối thiểu $min GB, nhưng có thể không thể cập nhật hệ thống."
         echo "Please input System Partition Size. Minimal is $min GB but may not be able to do system updates."
         while true; do
             IFS= read -r -p "Size in GB [$default]: " input
@@ -1682,7 +1755,7 @@ Continue with DD?
         if is_in_china; then
             mirror=https://mirror.nju.edu.cn/anthon/aosc-os
         else
-            # 服务器在香港
+            # Server ở Hồng Kông
             mirror=https://releases.aosc.io
         fi
 
@@ -1695,7 +1768,7 @@ Continue with DD?
     }
 
     setos_centos_almalinux_rocky_fedora() {
-        # el 10 需要 x86-64-v3，除了 almalinux
+        # el 10 cần x86-64-v3, trừ almalinux
         if [ "$basearch" = x86_64 ] &&
             { [ "$distro" = centos ] || [ "$distro" = rocky ]; } &&
             [ "$releasever" -ge 10 ]; then
@@ -1730,12 +1803,12 @@ Continue with DD?
             centos)
                 case $releasever in
                 7)
-                    # CentOS-7-aarch64-GenericCloud.qcow2c 是旧版本
+                    # CentOS-7-aarch64-GenericCloud.qcow2c là phiên bản cũ
                     ver=-2211
                     ci_image=$ci_mirror/$releasever/images/CentOS-$releasever-$elarch-GenericCloud$ver.qcow2c
                     ;;
                 *)
-                    # 有 bios 和 efi 镜像
+                    # Có image bios và efi
                     # https://cloud.centos.org/centos/10-stream/x86_64/images/CentOS-Stream-GenericCloud-10-latest.x86_64.qcow2
                     # https://cloud.centos.org/centos/10-stream/x86_64/images/CentOS-Stream-GenericCloud-x86_64-10-latest.x86_64.qcow2
                     [ "$elarch" = x86_64 ] &&
@@ -1747,7 +1820,7 @@ Continue with DD?
             almalinux) ci_image=$ci_mirror/AlmaLinux-$releasever-GenericCloud-latest.$elarch.qcow2 ;;
             rocky) ci_image=$ci_mirror/Rocky-$releasever-GenericCloud-Base.latest.$elarch.qcow2 ;;
             fedora)
-                # 不加 / 会跳转到 https://dl.fedoraproject.org，纯 ipv6 无法访问
+                # Không thêm / sẽ redirect đến https://dl.fedoraproject.org, ipv6 thuần không thể truy cập
                 # curl -L -6 https://d2lzkl7pfhq30w.cloudfront.net/pub/fedora/linux/releases/42/Cloud/x86_64/images
                 # curl -L -6 https://d2lzkl7pfhq30w.cloudfront.net/pub/fedora/linux/releases/42/Cloud/x86_64/images/
                 filename=$(curl -L $ci_mirror/ | grep -oP "Fedora-Cloud-Base-Generic.*?.qcow2" |
@@ -1758,7 +1831,7 @@ Continue with DD?
 
             eval ${step}_img=${ci_image}
         else
-            # 传统安装
+            # Cài đặt truyền thống
             case $distro in
             centos) mirrorlist="https://mirrors.centos.org/mirrorlist?repo=centos-baseos-$releasever-stream&arch=$elarch" ;;
             almalinux) mirrorlist="https://mirrors.almalinux.org/mirrorlist/$releasever/baseos" ;;
@@ -1766,7 +1839,7 @@ Continue with DD?
             fedora) mirrorlist="https://mirrors.fedoraproject.org/mirrorlist?arch=$elarch&repo=fedora-$releasever" ;;
             esac
 
-            # rocky/centos9 需要删除第一行注释， almalinux 需要替换链接里面的 $basearch
+            # rocky/centos9 cần xóa comment dòng đầu, almalinux cần thay thế $basearch trong liên kết
             for cur_mirror in $(curl -L $mirrorlist | sed "/^#/d" | sed "s,\$basearch,$elarch,"); do
                 host=$(get_host_by_url $cur_mirror)
                 if is_host_has_ipv4_and_ipv6 $host &&
@@ -1828,8 +1901,8 @@ Continue with DD?
     }
 
     setos_opencloudos() {
-        # https://mirrors.opencloudos.tech 不支持 ipv6
-        # https://mirrors.cloud.tencent.com 没有 stream
+        # https://mirrors.opencloudos.tech không hỗ trợ ipv6
+        # https://mirrors.cloud.tencent.com không có stream
         if [ "$releasever" -ge 23 ]; then
             mirror=https://mirrors.opencloudos.tech/opencloudos-stream/releases
         else
@@ -1892,12 +1965,12 @@ Continue with DD?
     *) setos_$distro ;;
     esac
 
-    # debian/kali <=256M 必须使用云内核，否则不够内存
+    # debian/kali <=256M phải dùng cloud kernel, nếu không không đủ bộ nhớ
     if is_distro_like_debian && ! is_in_windows && [ "$ram_size" -le 256 ]; then
         exit_if_cant_use_cloud_kernel
     fi
 
-    # 集中测试云镜像格式
+    # Tập trung test định dạng cloud image
     if is_use_cloud_image && [ "$step" = finalos ]; then
         # shellcheck disable=SC2154
         test_url $finalos_img 'qemu qemu.gzip qemu.xz qemu.zstd raw.xz' finalos_img_type
@@ -1927,13 +2000,13 @@ get_latest_distro_releasever() {
         grep -wo "$1 [^'\"]*" | awk -F'|' '{print $NF}'
 }
 
-# 检查是否为正确的系统名
+# Kiểm tra xem có phải tên hệ thống đúng không
 verify_os_name() {
     if [ -z "$*" ]; then
         usage_and_exit
     fi
 
-    # 不要删除 centos 7
+    # Không xóa centos 7
     for os in \
         'centos      7|9|10' \
         'anolis      7|8|23' \
@@ -1962,7 +2035,7 @@ verify_os_name() {
         finalos=$(echo "$@" | to_lower | sed -n -E "s,^($ds)[ :-]?(|$vers_)$,\1 \2,p")
         if [ -n "$finalos" ]; then
             read -r distro releasever <<<"$finalos"
-            # 默认版本号
+            # Số phiên bản mặc định
             if [ -z "$releasever" ] && [ -n "$vers" ]; then
                 releasever=$(awk -F '|' '{print $NF}' <<<"|$vers")
             fi
@@ -1987,9 +2060,9 @@ verify_os_args() {
 }
 
 get_cmd_path() {
-    # arch 云镜像不带 which
-    # command -v 包括脚本里面的方法
-    # ash 无效
+    # arch cloud image không có which
+    # command -v bao gồm phương thức trong script
+    # ash không hiệu quả
     type -f -p $1
 }
 
@@ -2003,8 +2076,8 @@ install_pkg() {
     find_pkg_mgr() {
         [ -n "$pkg_mgr" ] && return
 
-        # 查找方法1: 通过 ID / ID_LIKE
-        # 因为可能装了多种包管理器
+        # Phương pháp tìm 1: Thông qua ID / ID_LIKE
+        # Vì có thể đã cài nhiều trình quản lý gói
         if [ -f /etc/os-release ]; then
             # shellcheck source=/dev/null
             for id in $({ . /etc/os-release && echo $ID $ID_LIKE; }); do
@@ -2022,7 +2095,7 @@ install_pkg() {
             done
         fi
 
-        # 查找方法 2
+        # Phương pháp tìm 2
         for mgr in dnf yum apt-get pacman zypper emerge apk nix-env; do
             is_have_cmd $mgr && pkg_mgr=$mgr && return
         done
@@ -2094,11 +2167,11 @@ install_pkg() {
         esac
     }
 
-    # 系统                       package名称                                    repo名称
+    # Hệ thống                       tên package                                    tên repo
     # centos/alma/rocky/fedora   epel-release                                   epel
     # oracle linux               oracle-epel-release                            ol9_developer_EPEL
     # opencloudos                epol-release                                   EPOL
-    # alibaba cloud linux 3      epel-release/epel-aliyuncs-release(qcow2自带)  epel
+    # alibaba cloud linux 3      epel-release/epel-aliyuncs-release(qcow2 tự có)  epel
     # anolis 23                  anolis-epao-release                            EPAO
 
     # anolis 8
@@ -2112,19 +2185,19 @@ install_pkg() {
         is_need_epel() {
             case "$pkg" in
             dpkg) true ;;
-            jq) is_have_cmd yum && ! is_have_cmd dnf ;; # el7/ol7 的 jq 在 epel 仓库
+            jq) is_have_cmd yum && ! is_have_cmd dnf ;; # jq của el7/ol7 trong repo epel
             *) false ;;
             esac
         }
 
         get_epel_repo_name() {
-            # el7 不支持 yum repolist --all，要使用 yum repolist all
-            # el7 yum repolist 第一栏有 /x86_64 后缀，因此要去掉。而 el9 没有
+            # el7 không hỗ trợ yum repolist --all, cần dùng yum repolist all
+            # el7 yum repolist cột đầu có hậu tố /x86_64, do đó cần bỏ. Còn el9 không có
             $pkg_mgr repolist all | awk '{print $1}' | awk -F/ '{print $1}' | grep -Ei 'ep(el|ol|ao)$'
         }
 
         get_epel_pkg_name() {
-            # el7 不支持 yum list --available，要使用 yum list available
+            # el7 không hỗ trợ yum list --available, cần dùng yum list available
             $pkg_mgr list available | grep -E '(.*-)?ep(el|ol|ao)-(.*-)?release' |
                 awk '{print $1}' | cut -d. -f1 | grep -v next | head -1
         }
@@ -2168,7 +2241,7 @@ install_pkg() {
             DEBIAN_FRONTEND=noninteractive apt-get install -y $pkg
             ;;
         nix-env)
-            # 不指定 channel 会很慢，而且很占内存
+            # Không chỉ định channel sẽ rất chậm, và chiếm nhiều bộ nhớ
             [ -z "$nix_updated" ] && nix-channel --update && nix_updated=1
             nix-env -iA nixos.$pkg
             ;;
@@ -2178,18 +2251,18 @@ install_pkg() {
     is_need_reinstall() {
         cmd=$1
 
-        # gentoo 默认编译的 unsquashfs 不支持 xz
+        # unsquashfs được biên dịch mặc định của gentoo không hỗ trợ xz
         if [ "$cmd" = unsquashfs ] && is_have_cmd emerge && ! $cmd |& grep -wq xz; then
             echo "unsquashfs not supported xz. rebuilding."
             return 0
         fi
 
-        # busybox fdisk 无法显示 mbr 分区表的 id
+        # busybox fdisk không thể hiển thị id bảng phân vùng mbr
         if [ "$cmd" = fdisk ] && is_have_cmd apk && $cmd |& grep -wq BusyBox; then
             return 0
         fi
 
-        # busybox grep 不支持 -oP
+        # busybox grep không hỗ trợ -oP
         if [ "$cmd" = grep ] && is_have_cmd apk && $cmd |& grep -wq BusyBox; then
             return 0
         fi
@@ -2219,7 +2292,7 @@ check_ram() {
         alpine | debian | kali | dd) echo 256 ;;
         arch | gentoo | aosc | nixos | windows) echo 512 ;;
         redhat | centos | almalinux | rocky | fedora | oracle | ubuntu | anolis | opencloudos | openeuler) echo 1024 ;;
-        opensuse | fnos) echo -1 ;; # 没有安装模式
+        opensuse | fnos) echo -1 ;; # Không có chế độ cài đặt
         esac
     )
 
@@ -2241,10 +2314,10 @@ check_ram() {
     if is_in_windows; then
         ram_size=$(wmic memorychip get capacity | awk -F= '{sum+=$2} END {if(sum>0) print sum/1024/1024}')
     else
-        # lsmem最准确但 centos7 arm 和 alpine 不能用，debian 9 util-linux 没有 lsmem
-        # arm 24g dmidecode 显示少了128m
-        # arm 24g lshw 显示23BiB
-        # ec2 t4g arm alpine 用 lsmem 和 dmidecode 都无效，要用 lshw，但结果和free -m一致，其他平台则没问题
+        # lsmem chính xác nhất nhưng centos7 arm và alpine không dùng được, debian 9 util-linux không có lsmem
+        # arm 24g dmidecode hiển thị thiếu 128m
+        # arm 24g lshw hiển thị 23BiB
+        # ec2 t4g arm alpine dùng lsmem và dmidecode đều không hiệu quả, cần dùng lshw, nhưng kết quả giống free -m, các nền tảng khác thì không vấn đề
         install_pkg lsmem
         ram_size=$(lsmem -b 2>/dev/null | grep 'Total online memory:' | awk '{ print $NF/1024/1024 }')
 
@@ -2255,15 +2328,15 @@ check_ram() {
 
         if ! is_valid_ram_size "$ram_size"; then
             install_pkg lshw
-            # 不能忽略 -i，alpine 显示的是 System memory
+            # Không thể bỏ qua -i, alpine hiển thị là System memory
             ram_str=$(lshw -c memory -short | grep -i 'System Memory' | awk '{print $3}')
             ram_size=$(grep <<<$ram_str -o '[0-9]*')
             grep <<<$ram_str GiB && ram_size=$((ram_size * 1024))
         fi
     fi
 
-    # 用于兜底，不太准确
-    # cygwin 要装 procps-ng 才有 free 命令
+    # Dùng để dự phòng, không chính xác lắm
+    # cygwin cần cài procps-ng mới có lệnh free
     if ! is_valid_ram_size "$ram_size"; then
         ram_size_k=$(grep '^MemTotal:' /proc/meminfo | awk '{print $2}')
         ram_size=$((ram_size_k / 1024 + 64 + 4))
@@ -2273,8 +2346,8 @@ check_ram() {
         error_and_exit "Could not detect RAM size."
     fi
 
-    # ram 足够就用普通方法安装，否则如果内存大于512就用 cloud image
-    # TODO: 测试 256 384 内存
+    # ram đủ thì dùng phương pháp thông thường cài đặt, nếu không nếu bộ nhớ lớn hơn 512 thì dùng cloud image
+    # TODO: Test 256 384 bộ nhớ
     if ! is_use_cloud_image && [ $ram_size -lt $ram_standard ]; then
         if $has_cloud_image; then
             info "RAM < $ram_standard MB. Fallback to cloud image mode"
@@ -2299,10 +2372,10 @@ is_efi() {
 }
 
 is_grub_dir_linked() {
-    # cloudcone 重装前/重装后(方法1)
+    # cloudcone trước khi cài lại/sau khi cài lại(phương pháp 1)
     [ "$(readlink -f /boot/grub/grub.cfg)" = /boot/grub2/grub.cfg ] ||
         [ "$(readlink -f /boot/grub2/grub.cfg)" = /boot/grub/grub.cfg ] ||
-        # cloudcone 重装后(方法2)
+        # cloudcone sau khi cài lại(phương pháp 2)
         { [ -f /boot/grub2/grub.cfg ] && [ "$(cat /boot/grub2/grub.cfg)" = 'chainloader (hd0)+1' ]; }
 }
 
@@ -2326,7 +2399,7 @@ is_need_grub_extlinux() {
     ! { is_netboot_xyz && is_efi; }
 }
 
-# 只有 linux bios 是用本机的 grub/extlinux
+# Chỉ linux bios dùng grub/extlinux của máy cục bộ
 is_use_local_grub_extlinux() {
     is_need_grub_extlinux && ! is_in_windows && ! is_efi
 }
@@ -2341,7 +2414,7 @@ is_use_local_extlinux() {
 
 is_mbr_using_grub() {
     find_main_disk
-    # 各发行版不一定自带 strings hexdump xxd od 命令
+    # Các distro không nhất thiết có sẵn lệnh strings hexdump xxd od
     head -c 440 /dev/$xda | grep --text -iq 'GRUB'
 }
 
@@ -2354,7 +2427,7 @@ to_lower() {
 }
 
 del_cr() {
-    # wmic/reg 换行符是 \r\r\n
+    # wmic/reg ký tự xuống dòng là \r\r\n
     # wmic nicconfig where InterfaceIndex=$id get MACAddress,IPAddress,IPSubnet,DefaultIPGateway | hexdump -c
     sed -E 's/\r+$//'
 }
@@ -2375,7 +2448,7 @@ trim() {
 prompt_password() {
     info "prompt password"
     warn false "Leave blank to use a random password."
-    warn false "不填写则使用随机密码"
+    warn false "Không điền thì dùng mật khẩu ngẫu nhiên"
     while true; do
         IFS= read -r -p "Password: " password
         if [ -n "$password" ]; then
@@ -2386,9 +2459,9 @@ prompt_password() {
                 error "Passwords don't match. Try again."
             fi
         else
-            # 特殊字符列表
+            # Danh sách ký tự đặc biệt
             # https://learn.microsoft.com/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/hh994562(v=ws.11)
-            # 有的机器运行 centos 7 ，用 /dev/random 产生 16 位密码，开启了 rngd 也要 5 秒，关闭了 rngd 则长期阻塞
+            # Một số máy chạy centos 7, dùng /dev/random tạo mật khẩu 16 ký tự, bật rngd cũng mất 5 giây, tắt rngd thì bị block lâu
             chars=\''A-Za-z0-9~!@#$%^&*_=+`|(){}[]:;"<>,.?/-'
             password=$(tr -dc "$chars" </dev/urandom | head -c16)
             break
@@ -2399,34 +2472,34 @@ prompt_password() {
 save_password() {
     dir=$1
 
-    # mkpasswd 有三个
-    # expect 里的 mkpasswd 是用来生成随机密码的
-    # whois 里的 mkpasswd 才是我们想要的，可能不支持 yescrypt，alpine 的 mkpasswd 是独立的包
-    # busybox 里的 mkpasswd 也是我们想要的，但多数不支持 yescrypt
+    # mkpasswd có ba loại
+    # mkpasswd trong expect dùng để tạo mật khẩu ngẫu nhiên
+    # mkpasswd trong whois mới là cái chúng ta cần, có thể không hỗ trợ yescrypt, mkpasswd của alpine là gói độc lập
+    # mkpasswd trong busybox cũng là cái chúng ta cần, nhưng đa số không hỗ trợ yescrypt
 
-    # alpine 这两个包有冲突
+    # alpine hai gói này có xung đột
     # apk add expect mkpasswd
 
-    # 不要用 echo "$password" 保存密码，原因：
+    # Không dùng echo "$password" để lưu mật khẩu, lý do:
     # password="-n"
-    # echo "$password"  # 空白
+    # echo "$password"  # trống
 
-    # 明文密码
-    # 假如用户运行 alpine live 直接打包硬盘镜像，如果保存了明文密码，则会暴露明文密码，因为 netboot initrd 在里面
-    # 通过 --password 传入密码，history 有记录，也会暴露明文密码
-    # /reinstall.log 也会暴露明文密码（已处理）
+    # Mật khẩu dạng văn bản thuần
+    # Nếu người dùng chạy alpine live trực tiếp đóng gói image ổ cứng, nếu lưu mật khẩu dạng văn bản thuần, sẽ lộ mật khẩu dạng văn bản thuần, vì netboot initrd ở trong đó
+    # Truyền mật khẩu qua --password, history có ghi lại, cũng sẽ lộ mật khẩu dạng văn bản thuần
+    # /reinstall.log cũng sẽ lộ mật khẩu dạng văn bản thuần (đã xử lý)
     if false; then
         printf '%s' "$password" >>"$dir/password-plaintext"
     fi
 
     # sha512
-    # 以下系统均支持 sha512 密码，但是生成密码需要不同的工具
-    # 兼容性     openssl   mkpasswd          busybox  python
-    # centos 7     ×      只有expect的       需要编译    √
-    # centos 8     √      只有expect的
+    # Các hệ thống sau đều hỗ trợ mật khẩu sha512, nhưng tạo mật khẩu cần công cụ khác nhau
+    # Tương thích     openssl   mkpasswd          busybox  python
+    # centos 7     ×      chỉ có expect        cần biên dịch    √
+    # centos 8     √      chỉ có expect
     # debian 9     ×         √
     # ubuntu 16    ×         √
-    # alpine       √      可能系统装了expect     √
+    # alpine       √      có thể hệ thống đã cài expect     √
     # cygwin       √
     # others       √
 
@@ -2440,9 +2513,9 @@ save_password() {
     elif is_have_cmd apt-get && install_pkg whois && mkpasswd -m help | grep -wq sha-512; then
         crypted=$(printf '%s' "$password" | mkpasswd -m sha-512 --stdin)
     # centos 7
-    # crypt.mksalt 是 python3 的
-    # 红帽把它 backport 到了 centos7 的 python2 上
-    # 在其它发行版的 python2 上运行会出错
+    # crypt.mksalt là của python3
+    # Red Hat đã backport nó vào python2 của centos7
+    # Chạy trên python2 của các distro khác sẽ lỗi
     elif is_have_cmd yum && is_have_cmd python2; then
         crypted=$(python2 -c "import crypt, sys; print(crypt.crypt(sys.argv[1], crypt.mksalt(crypt.METHOD_SHA512)))" "$password")
     else
@@ -2451,7 +2524,7 @@ save_password() {
     echo "$crypted" >"$dir/password-linux-sha512"
 
     # yescrypt
-    # 旧系统不支持，先不管
+    # Hệ thống cũ không hỗ trợ, tạm thời không quan tâm
     if false; then
         if mkpasswd -m help | grep -wq yescrypt; then
             crypted=$(printf '%s' "$password" | mkpasswd -m yescrypt --stdin)
@@ -2463,8 +2536,8 @@ save_password() {
     if [ "$distro" = windows ] || [ "$distro" = dd ]; then
         install_pkg iconv
 
-        # 要分两行写，因为 echo "$(xxx)" 返回值始终为 0，出错也不会中断脚本
-        # grep . 为了保证脚本没有出错
+        # Cần viết thành hai dòng, vì echo "$(xxx)" giá trị trả về luôn là 0, lỗi cũng không làm gián đoạn script
+        # grep . để đảm bảo script không lỗi
         base64=$(printf '%s' "${password}Password" | iconv -f UTF-8 -t UTF-16LE | base64 -w 0 | grep .)
         echo "$base64" >"$dir/password-windows-user-base64"
 
@@ -2473,7 +2546,7 @@ save_password() {
     fi
 }
 
-# 记录主硬盘
+# Ghi lại ổ cứng chính
 find_main_disk() {
     if [ -n "$main_disk" ]; then
         return
@@ -2481,32 +2554,32 @@ find_main_disk() {
 
     if is_in_windows; then
         # TODO:
-        # 已测试 vista
-        # 测试 软raid
-        # 测试 动态磁盘
+        # Đã test vista
+        # Test softraid
+        # Test dynamic disk
 
-        # diskpart 命令结果
-        # 磁盘 ID: E5FDE61C
-        # 磁盘 ID: {92CF6564-9B2E-4348-A3BD-D84E3507EBD7}
+        # Kết quả lệnh diskpart
+        # Disk ID: E5FDE61C
+        # Disk ID: {92CF6564-9B2E-4348-A3BD-D84E3507EBD7}
         main_disk=$(printf "%s\n%s" "select volume $c" "uniqueid disk" | diskpart |
             tail -1 | awk '{print $NF}' | sed 's,[{}],,g')
     else
-        # centos7下测试     lsblk --inverse $mapper | grep -w disk     grub2-probe -t disk /
-        # 跨硬盘btrfs       只显示第一个硬盘                            显示两个硬盘
-        # 跨硬盘lvm         显示两个硬盘                                显示/dev/mapper/centos-root
-        # 跨硬盘软raid      显示两个硬盘                                显示/dev/md127
+        # Test trên centos7     lsblk --inverse $mapper | grep -w disk     grub2-probe -t disk /
+        # btrfs qua nhiều ổ      chỉ hiển thị ổ đầu tiên                             hiển thị hai ổ
+        # lvm qua nhiều ổ        hiển thị hai ổ                                 hiển thị /dev/mapper/centos-root
+        # softraid qua nhiều ổ    hiển thị hai ổ                                 hiển thị /dev/md127
 
-        # 还有 findmnt
+        # Còn có findmnt
 
-        # 改成先检测 /boot/efi /efi /boot 分区？
+        # Đổi thành phát hiện phân vùng /boot/efi /efi /boot trước?
 
         install_pkg lsblk
-        # 查找主硬盘时，优先查找 /boot 分区，再查找 / 分区
-        # lvm 显示的是 /dev/mapper/xxx-yyy，再用第二条命令得到sda
+        # Khi tìm ổ cứng chính, ưu tiên tìm phân vùng /boot, sau đó tìm phân vùng /
+        # lvm hiển thị là /dev/mapper/xxx-yyy, dùng lệnh thứ hai để được sda
         mapper=$(mount | awk '$3=="/boot" {print $1}' | grep . || mount | awk '$3=="/" {print $1}')
         xda=$(lsblk -rn --inverse $mapper | grep -w disk | awk '{print $1}' | sort -u)
 
-        # 检测主硬盘是否横跨多个磁盘
+        # Phát hiện ổ cứng chính có trải qua nhiều ổ đĩa không
         os_across_disks_count=$(wc -l <<<"$xda")
         if [ $os_across_disks_count -eq 1 ]; then
             info "Main disk: $xda"
@@ -2514,24 +2587,24 @@ find_main_disk() {
             error_and_exit "OS across $os_across_disks_count disk: $xda"
         fi
 
-        # 可以用 dd 找出 guid?
+        # Có thể dùng dd để tìm guid?
 
-        # centos7 blkid lsblk 不显示 PTUUID
-        # centos7 sfdisk 不显示 Disk identifier
-        # alpine blkid 不显示 gpt 分区表的 PTUUID
-        # 因此用 fdisk
+        # centos7 blkid lsblk không hiển thị PTUUID
+        # centos7 sfdisk không hiển thị Disk identifier
+        # alpine blkid không hiển thị PTUUID của bảng phân vùng gpt
+        # Do đó dùng fdisk
 
         # Disk identifier: 0x36778223                                  # gnu fdisk + mbr
         # Disk identifier: D6B17C1A-FA1E-40A1-BDCB-0278A3ED9CFC        # gnu fdisk + gpt
         # Disk identifier (GUID): d6b17c1a-fa1e-40a1-bdcb-0278a3ed9cfc # busybox fdisk + gpt
-        # 不显示 Disk identifier                                        # busybox fdisk + mbr
+        # Không hiển thị Disk identifier                                # busybox fdisk + mbr
 
-        # 获取 xda 的 id
+        # Lấy id của xda
         install_pkg fdisk
         main_disk=$(fdisk -l /dev/$xda | grep 'Disk identifier' | awk '{print $NF}' | sed 's/0x//')
     fi
 
-    # 检查 id 格式是否正确
+    # Kiểm tra định dạng id có đúng không
     if ! grep -Eix '[0-9a-f]{8}' <<<"$main_disk" &&
         ! grep -Eix '[0-9a-f-]{36}' <<<"$main_disk"; then
         error_and_exit "Disk ID is invalid: $main_disk"
@@ -2546,7 +2619,7 @@ is_found_ipv6_netconf() {
     [ -n "$ipv6_mac" ] && [ -n "$ipv6_addr" ] && [ -n "$ipv6_gateway" ]
 }
 
-# TODO: 单网卡多IP
+# TODO: Một card mạng nhiều IP
 collect_netconf() {
     if is_in_windows; then
         convert_net_str_to_array() {
@@ -2556,30 +2629,30 @@ collect_netconf() {
             IFS=',' read -r -a "${var?}" <<<"$(grep "$key=" <<<"$config" | cut -d= -f2 | sed 's/[{}\"]//g')"
         }
 
-        # 部分机器精简了 powershell
-        # 所以不要用 powershell 获取网络信息
+        # Một số máy đã tinh giản powershell
+        # Do đó không dùng powershell để lấy thông tin mạng
         # ids=$(wmic nic where "PhysicalAdapter=true and MACAddress is not null and (PNPDeviceID like '%VEN_%&DEV_%' or PNPDeviceID like '%{F8615163-DF3E-46C5-913F-F2D2F965ED0E}%')" get InterfaceIndex | sed '1d')
 
-        # 否        手动        0    0.0.0.0/0                  19  192.168.1.1
-        # 否        手动        0    0.0.0.0/0                  59  nekoray-tun
+        # Không      Thủ công    0    0.0.0.0/0                  19  192.168.1.1
+        # Không      Thủ công    0    0.0.0.0/0                  59  nekoray-tun
 
         # wmic nic:
-        # 真实网卡
-        # AdapterType=以太网 802.3
+        # Card mạng thật
+        # AdapterType=Ethernet 802.3
         # AdapterTypeId=0
         # MACAddress=68:EC:C5:11:11:11
         # PhysicalAdapter=TRUE
         # PNPDeviceID=PCI\VEN_8086&amp;DEV_095A&amp;SUBSYS_94108086&amp;REV_61\4&amp;295A4BD&amp;1&amp;00E0
 
-        # VPN tun 网卡，部分移动云电脑也有
+        # Card mạng VPN tun, một số cloud PC di động cũng có
         # AdapterType=
         # AdapterTypeId=
         # MACAddress=
         # PhysicalAdapter=TRUE
         # PNPDeviceID=SWD\WINTUN\{6A460D48-FB76-6C3F-A47D-EF97D3DC6B0E}
 
-        # VMware 网卡
-        # AdapterType=以太网 802.3
+        # Card mạng VMware
+        # AdapterType=Ethernet 802.3
         # AdapterTypeId=0
         # MACAddress=00:50:56:C0:00:08
         # PhysicalAdapter=TRUE
@@ -2587,7 +2660,7 @@ collect_netconf() {
 
         for v in 4 6; do
             if [ "$v" = 4 ]; then
-                # 或者 route print
+                # Hoặc route print
                 routes=$(netsh int ipv4 show route | awk '$4 == "0.0.0.0/0"')
             else
                 routes=$(netsh int ipv6 show route | awk '$4 == "::/0"')
@@ -2606,7 +2679,7 @@ collect_netconf() {
                 fi
 
                 config=$(wmic nicconfig where InterfaceIndex=$id get MACAddress,IPAddress,IPSubnet,DefaultIPGateway)
-                # 排除 IP/子网/网关/MAC 为空的
+                # Loại bỏ IP/subnet/gateway/MAC rỗng
                 if grep -q '=$' <<<"$config"; then
                     continue
                 fi
@@ -2623,13 +2696,13 @@ collect_netconf() {
                         ip=${ips[i]}
                         subnet=${subnets[i]}
                         if [[ "$ip" = *.* ]]; then
-                            # ipcalc 依赖 perl，会使 cygwin 增加 ~50M
+                            # ipcalc phụ thuộc perl, sẽ làm cygwin tăng ~50M
                             # cidr=$(ipcalc -b "$ip/$subnet" | grep Netmask: | awk '{print $NF}')
                             cidr=$(mask2cidr "$subnet")
                             ipv4_addr="$ip/$cidr"
                             ipv4_gateway="$gateway"
                             ipv4_mac="$mac_addr"
-                            # 只取第一个 IP
+                            # Chỉ lấy IP đầu tiên
                             break
                         fi
                     done
@@ -2643,22 +2716,22 @@ collect_netconf() {
                         cidr=${subnets[i]}
                         if [[ "$ip" = *:* ]]; then
                             ipv6_type=$(grep "$ip" <<<"$ipv6_type_list" | awk '{print $1}')
-                            # Public 是 slaac
-                            # 还有类型 Temporary，不过有 Temporary 肯定还有 Public，因此不用
+                            # Public là slaac
+                            # Còn có loại Temporary, nhưng có Temporary chắc chắn còn có Public, do đó không dùng
                             if [ "$ipv6_type" = Public ] ||
                                 [ "$ipv6_type" = Dhcp ] ||
                                 [ "$ipv6_type" = Manual ]; then
                                 ipv6_addr="$ip/$cidr"
                                 ipv6_gateway="$gateway"
                                 ipv6_mac="$mac_addr"
-                                # 只取第一个 IP
+                                # Chỉ lấy IP đầu tiên
                                 break
                             fi
                         fi
                     done
                 fi
 
-                # 网关
+                # Gateway
                 # shellcheck disable=SC2154
                 if false; then
                     for gateway in "${gateways[@]}"; do
@@ -2670,7 +2743,7 @@ collect_netconf() {
                     done
                 fi
 
-                # 如果通过本条 route 的网卡找到了 IP 则退出 routes 循环
+                # Nếu tìm thấy IP qua card mạng của route này thì thoát vòng lặp routes
                 if is_found_ipv${v}_netconf; then
                     break
                 fi
@@ -2678,10 +2751,10 @@ collect_netconf() {
         done
     else
         # linux
-        # 通过默认网关得到默认网卡
+        # Thông qua gateway mặc định để được card mạng mặc định
 
-        # 多个默认路由下
-        # ip -6 route show default dev ens3 完全不显示
+        # Dưới nhiều route mặc định
+        # ip -6 route show default dev ens3 hoàn toàn không hiển thị
 
         # ip -6 route show default
         # default proto static metric 1024 pref medium
@@ -2698,7 +2771,7 @@ collect_netconf() {
         for v in 4 6; do
             if via_gateway_dev_ethx=$(ip -$v route show default | grep -Ewo 'via [^ ]+ dev [^ ]+' | head -1 | grep .); then
                 read -r _ gateway _ ethx <<<"$via_gateway_dev_ethx"
-                eval ipv${v}_ethx="$ethx" # can_use_cloud_kernel 要用
+                eval ipv${v}_ethx="$ethx" # can_use_cloud_kernel cần dùng
                 eval ipv${v}_mac="$(ip link show dev $ethx | grep link/ether | head -1 | awk '{print $2}')"
                 eval ipv${v}_gateway="$gateway"
                 eval ipv${v}_addr="$(ip -$v -o addr show scope global dev $ethx | grep -v temporary | head -1 | awk '{print $4}')"
@@ -2724,32 +2797,32 @@ collect_netconf() {
 add_efi_entry_in_windows() {
     source=$1
 
-    # 挂载
+    # Mount
     if result=$(find /cygdrive/?/EFI/Microsoft/Boot/bootmgfw.efi 2>/dev/null); then
-        # 已经挂载
+        # Đã mount
         x=$(echo $result | cut -d/ -f3)
     else
-        # 找到空盘符并挂载
+        # Tìm ký tự ổ trống và mount
         for x in {a..z}; do
             [ ! -e /cygdrive/$x ] && break
         done
         mountvol $x: /s
     fi
 
-    # 文件夹命名为reinstall而不是grub，因为可能机器已经安装了grub，bcdedit名字同理
+    # Đặt tên thư mục là reinstall thay vì grub, vì có thể máy đã cài grub, tên bcdedit cũng vậy
     dist_dir=/cygdrive/$x/EFI/reinstall
     basename=$(basename $source)
     mkdir -p $dist_dir
     cp -f "$source" "$dist_dir/$basename"
 
-    # 如果 {fwbootmgr} displayorder 为空
-    # 执行 bcdedit /copy '{bootmgr}' 会报错
-    # 例如 azure windows 2016 模板
-    # 要先设置默认的 {fwbootmgr} displayorder
+    # Nếu {fwbootmgr} displayorder rỗng
+    # Chạy bcdedit /copy '{bootmgr}' sẽ báo lỗi
+    # Ví dụ template azure windows 2016
+    # Cần đặt {fwbootmgr} displayorder mặc định trước
     # https://github.com/hakuna-m/wubiuefi/issues/286
     bcdedit /set '{fwbootmgr}' displayorder '{bootmgr}' /addfirst
 
-    # 添加启动项
+    # Thêm mục khởi động
     id=$(bcdedit /copy '{bootmgr}' /d "$(get_entry_name)" | grep -o '{.*}')
     bcdedit /set $id device partition=$x:
     bcdedit /set $id path \\EFI\\reinstall\\$basename
@@ -2757,9 +2830,9 @@ add_efi_entry_in_windows() {
 }
 
 get_maybe_efi_dirs_in_linux() {
-    # arch云镜像efi分区挂载在/efi，且使用 autofs，挂载后会有两个 /efi 条目
-    # openEuler 云镜像 boot 分区是 vfat 格式，但 vfat 可以当 efi 分区用
-    # TODO: 最好通过 lsblk/blkid 检查是否为 efi 分区类型
+    # Image cloud arch phân vùng efi mount ở /efi, và dùng autofs, sau khi mount sẽ có hai mục /efi
+    # Image cloud openEuler phân vùng boot là định dạng vfat, nhưng vfat có thể dùng làm phân vùng efi
+    # TODO: Tốt nhất thông qua lsblk/blkid kiểm tra xem có phải loại phân vùng efi không
     mount | awk '$5=="vfat" || $5=="autofs" {print $3}' | grep -E '/boot|/efi' | sort -u
 }
 
@@ -2786,12 +2859,12 @@ grep_efi_entry() {
     # MirroredPercentageAbove4G: 0.00
     # MirrorMemoryBelow4GB: false
 
-    # 根据文档，* 表示 active，也就是说有可能没有*(代表inactive)
+    # Theo tài liệu, * biểu thị active, nghĩa là có thể không có * (biểu thị inactive)
     # https://manpages.debian.org/testing/efibootmgr/efibootmgr.8.en.html
     grep -E '^Boot[0-9a-fA-F]{4}'
 }
 
-# trans.sh 有同名方法
+# trans.sh có phương thức cùng tên
 grep_efi_index() {
     awk '{print $1}' | sed -e 's/Boot//' -e 's/\*//'
 }
@@ -2818,7 +2891,7 @@ add_efi_entry_in_linux() {
                 dev_part="$("$grub_probe" -t device "$dist_dir")"
             else
                 install_pkg findmnt
-                # arch findmnt 会得到
+                # arch findmnt sẽ được
                 # systemd-1
                 # /dev/sda2
                 dev_part=$(findmnt -T "$dist_dir" -no SOURCE | grep '^/dev/')
@@ -2848,24 +2921,24 @@ get_grub_efi_filename() {
 install_grub_linux_efi() {
     info 'download grub efi'
 
-    # fedora 39 的 efi 无法识别 opensuse tumbleweed 的 xfs
+    # efi của fedora 39 không thể nhận diện xfs của opensuse tumbleweed
     efi_distro=opensuse
 
     grub_efi=$(get_grub_efi_filename)
 
-    # 不要用 download.opensuse.org 和 download.fedoraproject.org
-    # 因为 ipv6 访问有时跳转到 ipv4 地址，造成 ipv6 only 机器无法下载
-    # 日韩机器有时得到国内镜像源，但镜像源屏蔽了国外 IP 导致连不上
+    # Không dùng download.opensuse.org và download.fedoraproject.org
+    # Vì truy cập ipv6 đôi khi redirect đến địa chỉ ipv4, khiến máy chỉ ipv6 không thể tải xuống
+    # Máy Nhật Hàn đôi khi nhận được mirror trong nước, nhưng mirror chặn IP nước ngoài khiến không kết nối được
     # https://mirrors.bfsu.edu.cn/opensuse/ports/aarch64/tumbleweed/repo/oss/EFI/BOOT/grub.efi
 
-    # fcix 经常 404
+    # fcix thường xuyên 404
     # https://mirror.fcix.net/opensuse/tumbleweed/repo/oss/EFI/BOOT/bootx64.efi
     # https://mirror.fcix.net/opensuse/tumbleweed/appliances/openSUSE-Tumbleweed-Minimal-VM.x86_64-Cloud.qcow2
 
-    # dl.fedoraproject.org 不支持 ipv6
+    # dl.fedoraproject.org không hỗ trợ ipv6
 
     if [ "$efi_distro" = fedora ]; then
-        # fedora 43 efi 在 vultr 无法引导 debain 9/10 netboot
+        # fedora 43 efi trên vultr không thể boot debian 9/10 netboot
         fedora_ver=$(get_latest_distro_releasever fedora)
 
         if is_in_china; then
@@ -2903,17 +2976,17 @@ download_and_extract_apk() {
     fi
     mkdir -p "$extract_dir"
 
-    # 屏蔽警告
+    # Ẩn cảnh báo
     tar 2>&1 | grep -q BusyBox && tar_args= || tar_args=--warning=no-unknown-keyword
     curl -L "$mirror/v$alpine_ver/main/$basearch/$package_apk" | tar xz $tar_args -C "$extract_dir"
 }
 
 install_grub_win() {
-    # 下载 grub
+    # Tải xuống grub
     info download grub
     grub_ver=2.06
-    # ftpmirror.gnu.org 是 geoip 重定向，不是 cdn
-    # 有可能重定义到一个拉黑了部分 IP 的服务器
+    # ftpmirror.gnu.org là geoip redirect, không phải cdn
+    # Có thể redirect đến server đã chặn một số IP
     is_in_china && grub_url=https://mirror.nju.edu.cn/gnu/grub/grub-$grub_ver-for-windows.zip ||
         grub_url=https://mirrors.kernel.org/gnu/grub/grub-$grub_ver-for-windows.zip
     curl -Lo $tmp/grub.zip $grub_url
@@ -2922,20 +2995,20 @@ install_grub_win() {
     grub_dir=$tmp/grub-$grub_ver-for-windows
     grub=$grub_dir/grub
 
-    # 设置 grub 包含的模块
-    # 原系统是 windows，因此不需要 ext2 lvm xfs btrfs
+    # Đặt các module mà grub bao gồm
+    # Hệ thống gốc là windows, do đó không cần ext2 lvm xfs btrfs
     grub_modules+=" normal minicmd serial ls echo test cat reboot halt linux chain search all_video configfile"
     grub_modules+=" scsi part_msdos part_gpt fat ntfs ntfscomp lzopio xzio gzio zstd"
     if ! is_efi; then
         grub_modules+=" biosdisk linux16"
     fi
 
-    # 设置 grub prefix 为c盘根目录
-    # 运行 grub-probe 会改变cmd窗口字体
+    # Đặt grub prefix là thư mục gốc ổ c
+    # Chạy grub-probe sẽ thay đổi font cửa sổ cmd
     prefix=$($grub-probe -t drive $c: | sed 's|.*PhysicalDrive|(hd|' | del_cr)/
     echo $prefix
 
-    # 安装 grub
+    # Cài đặt grub
     if is_efi; then
         # efi
         info install grub for efi
@@ -2945,9 +3018,9 @@ install_grub_win() {
         aarch64) grub_arch=arm64 ;;
         esac
 
-        # 下载 grub arm64 模块
+        # Tải xuống module grub arm64
         if ! [ -d $grub_dir/grub/$grub_arch-efi ]; then
-            # 3.20 是 grub 2.12，可能会有问题
+            # 3.20 là grub 2.12, có thể có vấn đề
             alpine_ver=3.19
             download_and_extract_apk $alpine_ver grub-efi $tmp/grub-efi
             cp -r $tmp/grub-efi/usr/lib/grub/$grub_arch-efi/ $grub_dir
@@ -2960,25 +3033,25 @@ install_grub_win() {
         # bios
         info install grub for bios
 
-        # bootmgr 加载 g2ldr 有大小限制
-        # 超过大小会报错 0xc000007b
-        # 解决方法1 g2ldr.mbr + g2ldr
-        # 解决方法2 生成少于64K的 g2ldr + 动态模块
+        # bootmgr tải g2ldr có giới hạn kích thước
+        # Vượt quá kích thước sẽ báo lỗi 0xc000007b
+        # Giải pháp 1 g2ldr.mbr + g2ldr
+        # Giải pháp 2 tạo g2ldr nhỏ hơn 64K + module động
         if false; then
             # g2ldr.mbr
-            # 部分国内机无法访问 ftp.cn.debian.org
+            # Một số máy trong nước không thể truy cập ftp.cn.debian.org
             is_in_china && host=mirror.nju.edu.cn || host=deb.debian.org
             curl -LO http://$host/debian/tools/win32-loader/stable/win32-loader.exe
             7z x win32-loader.exe 'g2ldr.mbr' -o$tmp/win32-loader -r -y -bso0
             find $tmp/win32-loader -name 'g2ldr.mbr' -exec cp {} /cygdrive/$c/ \;
 
             # g2ldr
-            # 配置文件 c:\grub.cfg
+            # File cấu hình c:\grub.cfg
             $grub-mkimage -p "$prefix" -O i386-pc -o "$(cygpath -w $grub_dir/core.img)" $grub_modules
             cat $grub_dir/i386-pc/lnxboot.img $grub_dir/core.img >/cygdrive/$c/g2ldr
         else
-            # grub-install 无法设置 prefix
-            # 配置文件 c:\grub\grub.cfg
+            # grub-install không thể đặt prefix
+            # File cấu hình c:\grub\grub.cfg
             $grub-install $c \
                 --target=i386-pc \
                 --boot-directory=$c: \
@@ -2990,8 +3063,8 @@ install_grub_win() {
             cat $grub_dir/i386-pc/lnxboot.img /cygdrive/$c/grub/i386-pc/core.img >/cygdrive/$c/g2ldr
         fi
 
-        # 添加引导
-        # 脚本可能不是首次运行，所以先删除原来的
+        # Thêm boot
+        # Script có thể không phải lần đầu chạy, do đó xóa cái cũ trước
         id='{1c41f649-1637-52f1-aea8-f96bfebeecc8}'
         bcdedit /enum all | grep --text $id && bcdedit /delete $id
         bcdedit /create $id /d "$(get_entry_name)" /application bootsector
@@ -3007,11 +3080,11 @@ find_grub_extlinux_cfg() {
     filename=$2
     keyword=$3
 
-    # 当 ln -s /boot/grub /boot/grub2 时
-    # find /boot/ 会自动忽略 /boot/grub2 里面的文件
+    # Khi ln -s /boot/grub /boot/grub2
+    # find /boot/ sẽ tự động bỏ qua file trong /boot/grub2
     cfgs=$(
-        # 只要 $dir 存在
-        # 无论是否找到结果，返回值都是 0
+        # Chỉ cần $dir tồn tại
+        # Dù có tìm thấy kết quả hay không, giá trị trả về đều là 0
         find $dir \
             -type f -name $filename \
             -exec grep -E -l "$keyword" {} \;
@@ -3025,12 +3098,12 @@ find_grub_extlinux_cfg() {
     fi
 }
 
-# 空格、&、用户输入的网址要加引号，否则 grub 无法正确识别
+# Khoảng trắng, &, URL người dùng nhập cần thêm dấu ngoặc kép, nếu không grub không thể nhận diện đúng
 is_need_quote() {
     [[ "$1" = *' '* ]] || [[ "$1" = *'&'* ]] || [[ "$1" = http* ]]
 }
 
-# 转换 finalos_a=1 为 finalos.a=1 ，排除 finalos_mirrorlist
+# Chuyển đổi finalos_a=1 thành finalos.a=1, loại trừ finalos_mirrorlist
 build_finalos_cmdline() {
     if vars=$(compgen -v finalos_); then
         for key in $vars; do
@@ -3046,14 +3119,14 @@ build_finalos_cmdline() {
 }
 
 build_extra_cmdline() {
-    # 使用 extra_xxx=yyy 而不是 extra.xxx=yyy
-    # 因为 debian installer /lib/debian-installer-startup.d/S02module-params
-    # 会将 extra.xxx=yyy 写入新系统的 /etc/modprobe.d/local.conf
+    # Dùng extra_xxx=yyy thay vì extra.xxx=yyy
+    # Vì debian installer /lib/debian-installer-startup.d/S02module-params
+    # Sẽ ghi extra.xxx=yyy vào /etc/modprobe.d/local.conf của hệ thống mới
     # https://answers.launchpad.net/ubuntu/+question/249456
     # https://salsa.debian.org/installer-team/rootskel/-/blob/master/src/lib/debian-installer-startup.d/S02module-params?ref_type=heads
     for key in confhome hold force_boot_mode force_cn force_old_windows_setup cloud_image main_disk \
         elts deb_mirror \
-        ssh_port rdp_port web_port allow_ping; do
+        ssh_port rdp_port web_port allow_ping PROGRESS_PORT; do
         value=${!key}
         if [ -n "$value" ]; then
             is_need_quote "$value" &&
@@ -3062,14 +3135,14 @@ build_extra_cmdline() {
         fi
     done
 
-    # 指定最终安装系统的 mirrorlist，链接有&，在grub中是特殊字符，所以要加引号
+    # Chỉ định mirrorlist của hệ thống cài đặt cuối cùng, liên kết có &, trong grub là ký tự đặc biệt, do đó cần thêm dấu ngoặc kép
     if [ -n "$finalos_mirrorlist" ]; then
         extra_cmdline+=" extra_mirrorlist='$finalos_mirrorlist'"
     elif [ -n "$nextos_mirrorlist" ]; then
         extra_cmdline+=" extra_mirrorlist='$nextos_mirrorlist'"
     fi
 
-    # cloudcone 特殊处理
+    # Xử lý đặc biệt cloudcone
     if is_grub_dir_linked; then
         finalos_cmdline+=" extra_link_grub_dir=1"
     fi
@@ -3099,20 +3172,20 @@ build_nextos_cmdline() {
     if [ $nextos_distro = alpine ]; then
         nextos_cmdline="alpine_repo=$nextos_repo modloop=$nextos_modloop"
     elif is_distro_like_debian $nextos_distro; then
-        # 设置分辨率为800*600，防止分辨率过高 ssh screen attach 后无法全部显示
-        # iso 默认有 vga=788
-        # 如果要设置位数: video=800x600-16
+        # Đặt độ phân giải 800*600, tránh độ phân giải quá cao ssh screen attach sau không thể hiển thị hết
+        # iso mặc định có vga=788
+        # Nếu muốn đặt số bit: video=800x600-16
         nextos_cmdline="lowmem/low=1 auto=true priority=critical"
         # nextos_cmdline+=" vga=788 video=800x600"
         nextos_cmdline+=" url=$nextos_ks"
         nextos_cmdline+=" mirror/http/hostname=${nextos_udeb_mirror%/*}"
         nextos_cmdline+=" mirror/http/directory=/${nextos_udeb_mirror##*/}"
         nextos_cmdline+=" base-installer/kernel/image=$nextos_kernel"
-        # elts 的 debian 不能用 security 源，否则安装过程会提示无法访问
+        # debian elts không thể dùng nguồn security, nếu không quá trình cài đặt sẽ nhắc không thể truy cập
         if [ "$nextos_distro" = debian ] && is_debian_elts; then
             nextos_cmdline+=" apt-setup/services-select="
         fi
-        # kali 安装好后网卡是 eth0 这种格式，但安装时不是
+        # kali sau khi cài đặt xong card mạng là định dạng eth0, nhưng khi cài đặt thì không phải
         if [ "$nextos_distro" = kali ]; then
             nextos_cmdline+=" net.ifnames=0"
             nextos_cmdline+=" simple-cdd/profiles=kali"
@@ -3124,8 +3197,8 @@ build_nextos_cmdline() {
 
     if is_distro_like_debian $nextos_distro; then
         if [ "$basearch" = "x86_64" ]; then
-            # debian installer 好像第一个 tty 是主 tty
-            # 设置ttyS0,tty0,安装界面还是显示在ttyS0
+            # debian installer có vẻ tty đầu tiên là tty chính
+            # Đặt ttyS0,tty0, giao diện cài đặt vẫn hiển thị trên ttyS0
             :
         else
             # debian arm 在没有ttyAMA0的机器上（aws t4g），最少要设置一个tty才能启动
@@ -3144,7 +3217,7 @@ build_cmdline() {
     build_nextos_cmdline
 
     # finalos
-    # trans 需要 finalos_distro 识别是安装 alpine 还是其他系统
+    # trans cần finalos_distro để nhận diện là cài alpine hay hệ thống khác
     if [ "$distro" = alpine ]; then
         finalos_distro=alpine
     fi
@@ -3158,7 +3231,7 @@ build_cmdline() {
     cmdline="$nextos_cmdline $finalos_cmdline $extra_cmdline"
 }
 
-# 脚本可能多次运行，先清理之前的残留
+# Script có thể chạy nhiều lần, xóa dữ liệu còn sót trước đó trước
 mkdir_clear() {
     dir=$1
 
@@ -3166,8 +3239,8 @@ mkdir_clear() {
         return
     fi
 
-    # 再次运行时，有可能 mount 了 btrfs root，因此先要 umount_all
-    # 但目前不需要 mount ，因此用不到
+    # Khi chạy lại, có thể đã mount btrfs root, do đó cần umount_all trước
+    # Nhưng hiện tại không cần mount, do đó không dùng đến
     # umount_all "$dir"
     rm -rf "$dir"
     mkdir -p "$dir"
@@ -3179,7 +3252,7 @@ mod_initrd_debian_kali() {
     sed -Ei 's,&&( onlink=),||\1,' etc/udhcpc/default.script
 
     # hack 2
-    # 强制使用 screen
+    # Buộc dùng screen
     # shellcheck disable=SC1003,SC2016
     {
         echo 'if false && : \' | insert_into_file lib/debian-installer.d/S70menu before 'if [ -x "$bterm" ]' -F
@@ -3211,9 +3284,9 @@ mod_initrd_debian_kali() {
     # cat $postinst
 
     # hack 4
-    # 修改 udeb 依赖
+    # Sửa phụ thuộc udeb
 
-    # 直接覆盖 net-retriever，方便调试
+    # Ghi đè trực tiếp net-retriever, tiện debug
     # curl -Lo /usr/lib/debian-installer/retriever/net-retriever $confhome/net-retriever
 
     change_priority() {
@@ -3231,7 +3304,7 @@ mod_initrd_debian_kali() {
                         fi
                     done
                 elif [[ "$package" = ata-modules* ]]; then
-                    # 改成强制安装
+                    # Đổi thành cài đặt bắt buộc
                     # 因为是 pata-modules sata-modules scsi-modules 的依赖
                     # 但我们没安装它们，也就不会自动安装 ata-modules
                     line="Priority: standard"
@@ -3681,8 +3754,8 @@ EOF
         chmod a+x \$sysroot/etc/local.d/trans.start
         ln -s /etc/init.d/local \$sysroot/etc/runlevels/default/
 
-        # 配置 + 自定义驱动
-        for dir in /configs /custom_drivers; do
+        # 配置 + 自定义驱动 + backend
+        for dir in /configs /custom_drivers /backend; do
             if [ -d \$dir ]; then
                 cp -r \$dir \$sysroot/
                 rm -rf \$dir
@@ -3744,6 +3817,16 @@ This script is outdated, please download reinstall.sh again.
     fi
     if [ -n "$frpc_config" ]; then
         cat "$frpc_config" >$initrd_dir/configs/frpc.toml
+    fi
+    
+    # Copy backend vào initrd nếu có và đang chạy progress server
+    if [ -n "$PROGRESS_PORT" ] && [ -d "$(dirname "$0")/backend" ]; then
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+        if [ -d "$SCRIPT_DIR/backend" ]; then
+            cp -r "$SCRIPT_DIR/backend" $initrd_dir/backend
+            # Lưu PROGRESS_PORT vào configs để trans.sh có thể đọc
+            echo "$PROGRESS_PORT" >$initrd_dir/configs/PROGRESS_PORT
+        fi
     fi
 
     if is_distro_like_debian $nextos_distro; then
@@ -4287,6 +4370,30 @@ fi
 # 检查内存
 # 会用到 wmic，因此要在设置国内 confhome 后使用
 check_ram
+
+# 启动 progress tracking server (nếu có backend)
+if [ -d "$(dirname "$0")/backend" ] && command -v node >/dev/null 2>&1; then
+    PROGRESS_PORT=${PROGRESS_PORT:-8080}
+    export PROGRESS_PORT
+    export PROGRESS_LOG=/reinstall.log
+    
+    # Start progress server in background
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    if [ -f "$SCRIPT_DIR/start-progress-server.sh" ]; then
+        bash "$SCRIPT_DIR/start-progress-server.sh" >/dev/null 2>&1 &
+        PROGRESS_SERVER_PID=$!
+        export PROGRESS_SERVER_PID
+        
+        # Wait a moment for server to start
+        sleep 2
+        
+        # Report initial progress
+        report_progress "Khởi tạo" 0 "running" "Bắt đầu quá trình cài đặt..."
+        
+        info "Progress tracking server started on port $PROGRESS_PORT"
+        info "Access dashboard at: http://$(hostname -I | awk '{print $1}'):$PROGRESS_PORT"
+    fi
+fi
 
 # 以下目标系统不需要两步安装
 # alpine

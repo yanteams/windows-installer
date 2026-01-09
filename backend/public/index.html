@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Theo dõi tiến trình cài đặt Windows - Realtime</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🪟 Theo dõi tiến trình cài đặt Windows</h1>
+            <div class="status-bar">
+                <span class="status-indicator" id="statusIndicator"></span>
+                <span id="statusText">Đang chờ...</span>
+                <span class="connection-status" id="connectionStatus">
+                    <span class="connection-dot"></span>
+                    <span id="connectionText">Đang kết nối...</span>
+                </span>
+            </div>
+        </header>
+
+        <div class="progress-section">
+            <div class="progress-info">
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progressBar">
+                        <div class="progress-fill" id="progressFill"></div>
+                        <div class="progress-shine"></div>
+                    </div>
+                    <span class="progress-text" id="progressText">0%</span>
+                </div>
+                <div class="step-info">
+                    <h3 id="currentStep">Chưa bắt đầu</h3>
+                    <p class="step-message" id="stepMessage">Sẵn sàng bắt đầu cài đặt...</p>
+                    <div class="time-info">
+                        <div class="time-item">
+                            <span class="time-label">Bắt đầu:</span>
+                            <span id="startTime">-</span>
+                        </div>
+                        <div class="time-item">
+                            <span class="time-label">Thời gian:</span>
+                            <span id="elapsedTime" class="time-value">00:00:00</span>
+                        </div>
+                        <div class="time-item" id="estimatedTimeContainer" style="display: none;">
+                            <span class="time-label">Ước tính:</span>
+                            <span id="estimatedTime" class="time-value">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-section">
+            <div class="stat-card">
+                <div class="stat-icon">📊</div>
+                <div class="stat-content">
+                    <div class="stat-label">Tiến độ</div>
+                    <div class="stat-value" id="progressPercent">0%</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">📝</div>
+                <div class="stat-content">
+                    <div class="stat-label">Số log</div>
+                    <div class="stat-value" id="logCount">0</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">⏱️</div>
+                <div class="stat-content">
+                    <div class="stat-label">Thời gian</div>
+                    <div class="stat-value" id="elapsedTimeStat">00:00:00</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="logs-section">
+            <div class="logs-header">
+                <h2>📋 Nhật ký cài đặt</h2>
+                <div class="logs-controls">
+                    <input type="text" id="logFilter" placeholder="🔍 Lọc logs..." class="log-filter">
+                    <button id="autoScrollBtn" class="btn-icon active" title="Tự động cuộn">
+                        <span>📜</span>
+                    </button>
+                    <button id="clearLogs" class="btn-secondary">🗑️ Xóa</button>
+                </div>
+            </div>
+            <div class="logs-container" id="logsContainer">
+                <div class="log-empty">Chưa có nhật ký</div>
+            </div>
+        </div>
+
+        <div class="error-section" id="errorSection" style="display: none;">
+            <h2>❌ Lỗi</h2>
+            <div class="error-message" id="errorMessage"></div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

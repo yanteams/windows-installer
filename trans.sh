@@ -1,14 +1,14 @@
 #!/bin/ash
 # shellcheck shell=dash
 # shellcheck disable=SC2086,SC3047,SC3036,SC3010,SC3001,SC3060
-# alpine 默认使用 busybox ash
-# 注意 bash 和 ash 以下语句结果不同
+# alpine mặc định sử dụng busybox ash
+# Lưu ý bash và ash có kết quả khác nhau với câu lệnh sau
 # [[ a = '*a' ]] && echo 1
 
-# 出错后停止运行，将进入到登录界面，防止失联
+# Dừng chạy khi gặp lỗi, sẽ vào giao diện đăng nhập để tránh mất kết nối
 set -eE
 
-# 用于判断 reinstall.sh 和 trans.sh 是否兼容
+# Dùng để kiểm tra reinstall.sh và trans.sh có tương thích không
 # shellcheck disable=SC2034
 SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
 
@@ -21,6 +21,7 @@ error() {
     plain='\e[0m'
     echo -e "${color}***** ERROR *****${plain}" >&2
     echo -e "${color}$*${plain}" >&2
+    report_progress "" "" "error" "$*"
 }
 
 info() {
@@ -36,6 +37,29 @@ info() {
     fi
 
     echo -e "${color}***** $msg *****${plain}" >&2
+    report_progress "$msg" "" "" "$msg"
+}
+
+# Progress reporting function
+report_progress() {
+    local step="$1"
+    local progress="$2"
+    local status="$3"
+    local message="$4"
+    
+    # Only report if progress server is available
+    if [ -n "$PROGRESS_PORT" ] && command -v curl >/dev/null 2>&1; then
+        local url="http://localhost:${PROGRESS_PORT}/api/progress"
+        local payload="{\"step\":\"$step\""
+        [ -n "$progress" ] && payload="${payload},\"progress\":$progress"
+        [ -n "$status" ] && payload="${payload},\"status\":\"$status\""
+        [ -n "$message" ] && payload="${payload},\"message\":\"$message\""
+        payload="${payload}}"
+        
+        curl -s -X POST "$url" \
+            -H "Content-Type: application/json" \
+            -d "$payload" >/dev/null 2>&1 || true
+    fi
 }
 
 warn() {
@@ -68,7 +92,7 @@ is_run_from_locald() {
 }
 
 add_community_repo() {
-    # 先检查原来的repo是不是egde
+    # Kiểm tra xem repo ban đầu có phải là edge không
     if grep -q '^http.*/edge/main$' /etc/apk/repositories; then
         alpine_ver=edge
     else
@@ -81,8 +105,8 @@ add_community_repo() {
     fi
 }
 
-# 有时网络问题下载失败，导致脚本中断
-# 因此需要重试
+# Đôi khi lỗi mạng khiến tải xuống thất bại, làm gián đoạn script
+# Do đó cần thử lại
 apk() {
     retry 5 command apk "$@" >&2
 }
@@ -96,23 +120,23 @@ show_url_in_args() {
     done
 }
 
-# 在没有设置 set +o pipefail 的情况下，限制下载大小：
-# retry 5 command wget | head -c 1048576 会触发 retry，下载 5 次
-# command wget "$@" --tries=5 | head -c 1048576 不会触发 wget 自带的 retry，只下载 1 次
+# Trong trường hợp không đặt set +o pipefail, giới hạn kích thước tải xuống:
+# retry 5 command wget | head -c 1048576 sẽ kích hoạt retry, tải xuống 5 lần
+# command wget "$@" --tries=5 | head -c 1048576 không kích hoạt retry tích hợp của wget, chỉ tải 1 lần
 wget() {
     show_url_in_args "$@" >&2
     if command wget 2>&1 | grep -q BusyBox; then
-        # busybox wget 没有重试功能
-        # 好像默认永不超时
+        # busybox wget không có chức năng thử lại
+        # Có vẻ mặc định không bao giờ timeout
         retry 5 command wget "$@" -T 10
     else
-        # 原版 wget 自带重试功能
+        # wget gốc có sẵn chức năng thử lại
         command wget --tries=5 --progress=bar:force "$@"
     fi
 }
 
 is_have_cmd() {
-    # command -v 包括脚本里面的方法
+    # command -v bao gồm các phương thức trong script
     is_have_cmd_on_disk / "$1"
 }
 
@@ -172,21 +196,21 @@ download() {
     url=$1
     path=$2
 
-    # 有ipv4地址无ipv4网关的情况下，aria2可能会用ipv4下载，而不是ipv6
-    # axel 在 lightsail 上会占用大量cpu
+    # Trong trường hợp có địa chỉ ipv4 nhưng không có gateway ipv4, aria2 có thể dùng ipv4 để tải xuống thay vì ipv6
+    # axel trên lightsail sẽ chiếm nhiều CPU
     # https://download.opensuse.org/distribution/leap/15.5/appliances/openSUSE-Leap-15.5-Minimal-VM.x86_64-kvm-and-xen.qcow2
     # https://aria2.github.io/manual/en/html/aria2c.html#cmdoption-o
 
-    # 阿里云源限速，而且检测 user-agent 禁止 axel/aria2 下载
-    # aria2 默认 --max-tries 5
+    # Nguồn Aliyun giới hạn tốc độ và phát hiện user-agent để cấm tải xuống bằng axel/aria2
+    # aria2 mặc định --max-tries 5
 
-    # 默认 --max-tries=5，但以下情况服务器出错，aria2不会重试，而是直接返回错误
-    # 因此添加 for 循环
+    # Mặc định --max-tries=5, nhưng trong trường hợp sau khi server lỗi, aria2 sẽ không thử lại mà trả về lỗi trực tiếp
+    # Do đó thêm vòng lặp for
     #     [ERROR] CUID#7 - Download aborted. URI=https://aka.ms/manawindowsdrivers
     # Exception: [AbstractCommand.cc:351] errorCode=1 URI=https://aka.ms/manawindowsdrivers
     #   -> [SocketCore.cc:1019] errorCode=1 SSL/TLS handshake failure:  `not signed by known authorities or invalid'
 
-    # 用 if 的话，报错不会中断脚本
+    # Nếu dùng if, lỗi sẽ không làm gián đoạn script
     # if aria2c xxx; then
     #     return
     # fi
@@ -194,7 +218,7 @@ download() {
     # --user-agent=Wget/1.21.1 \
     # --retry-wait 5
 
-    # 检测大小时已经下载了种子
+    # Khi kiểm tra kích thước đã tải xuống torrent
     if [ "$(get_url_type "$url")" = bt ]; then
         torrent="$(get_torrent_path_by_magnet $url)"
         if ! [ -f "$torrent" ]; then
@@ -203,21 +227,21 @@ download() {
         url=$torrent
     fi
 
-    # intel 禁止了 aria2 下载驱动
-    # intel 禁止了 wget 下载网页内容
-    # 腾讯云 virtio 驱动也禁止了 aria2 下载
+    # Intel cấm aria2 tải xuống driver
+    # Intel cấm wget tải xuống nội dung trang web
+    # Driver virtio của Tencent Cloud cũng cấm aria2 tải xuống
 
-    # -o 设置 http 下载文件名
-    # -O 设置 bt 首个文件的文件名
+    # -o đặt tên file tải xuống http
+    # -O đặt tên file đầu tiên của bt
     aria2c "$url" \
         -d "$(dirname "$path")" \
         -o "$(basename "$path")" \
         -O "1=$(basename "$path")" \
         -U curl/7.54.1
 
-    # opensuse 官方镜像支持 metalink
-    # aira2 无法重命名用 metalink 下载的文件
-    # 需用以下方法重命名
+    # Mirror chính thức của opensuse hỗ trợ metalink
+    # aria2 không thể đổi tên file tải xuống bằng metalink
+    # Cần dùng phương pháp sau để đổi tên
     if head -c 1024 "$path" | grep -Fq 'urn:ietf:params:xml:ns:metalink'; then
         real_file=$(tr -d '\n' <"$path" | sed -E 's|.*<file[[:space:]]+name="([^"]*)".*|\1|')
         mv "$(dirname "$path")/$real_file" "$path"
@@ -229,7 +253,7 @@ update_part() {
     sync
 
     # partprobe
-    # 有分区挂载中会报 Resource busy 错误
+    # Khi có phân vùng đang được mount sẽ báo lỗi Resource busy
     if is_have_cmd partprobe; then
         partprobe /dev/$xda 2>/dev/null || true
     fi
@@ -241,17 +265,17 @@ update_part() {
     fi
 
     # mdev
-    # mdev 不会删除 /dev/disk/ 的旧分区，因此手动删除
-    # 如果 rm -rf 的时候刚好 mdev 在创建链接，rm -rf 会报错 Directory not empty
-    # 因此要先停止 mdev 服务
-    # 还要删除 /dev/$xda*?
+    # mdev không xóa phân vùng cũ trong /dev/disk/, do đó cần xóa thủ công
+    # Nếu rm -rf khi mdev đang tạo liên kết, rm -rf sẽ báo lỗi Directory not empty
+    # Do đó cần dừng dịch vụ mdev trước
+    # Có cần xóa /dev/$xda*? không
     ensure_service_stopped mdev
-    # 即使停止了 mdev，有时也会报 Directory not empty，因此添加 retry
+    # Ngay cả khi đã dừng mdev, đôi khi vẫn báo Directory not empty, do đó thêm retry
     retry 5 rm -rf /dev/disk/*
 
-    # 没挂载 modloop 时会提示
+    # Khi không mount modloop sẽ có thông báo
     # modprobe: can't change directory to '/lib/modules': No such file or directory
-    # 因此强制不显示上面的提示
+    # Do đó buộc không hiển thị thông báo trên
     mdev -sf 2>/dev/null
     ensure_service_started mdev 2>/dev/null
     sleep 1
@@ -401,7 +425,7 @@ get_all_disks() {
 }
 
 extract_env_from_cmdline() {
-    # 提取 finalos/extra 到变量
+    # Trích xuất finalos/extra thành biến
     for prefix in finalos extra; do
         while read -r line; do
             if [ -n "$line" ]; then
@@ -411,6 +435,9 @@ extract_env_from_cmdline() {
             fi
         done < <(xargs -n1 </proc/cmdline | grep "^${prefix}_" | sed "s/^${prefix}_//")
     done
+    
+    # Export PROGRESS_PORT nếu có để report_progress có thể dùng
+    [ -n "$PROGRESS_PORT" ] && export PROGRESS_PORT
 }
 
 ensure_service_started() {
@@ -1659,7 +1686,7 @@ install_nixos() {
             sh=$sh_mirror/nix-$nix_ver/install
         else
             # 最新版 nix 在 nixos-install 时可能会出问题
-            # https://github.com/bin456789/reinstall/issues/451
+            # https://github.com/yanteams/windows-installer/issues/451
             if is_in_china; then
                 sh=https://mirror.nju.edu.cn/nix/latest/install
             else
@@ -5663,6 +5690,7 @@ install_windows() {
     }
 
     info "Process windows iso"
+    report_progress "Đang xử lý ISO Windows" 5 "running" "Khởi tạo quá trình cài đặt..."
     mkdir -p /iso /wim
 
     # find_file_ignore_case 也在这个文件里面
@@ -5671,7 +5699,9 @@ install_windows() {
 
     apk add wimlib
 
+    report_progress "Đang tải ISO Windows" 10 "running" "Đang tải file ISO..."
     download $iso /os/windows.iso
+    report_progress "Đang mount ISO" 15 "running" "Đang mount file ISO..."
     mount -o ro /os/windows.iso /iso
 
     sources_boot_wim=$(
@@ -5852,6 +5882,7 @@ install_windows() {
 
     # 复制启动相关的文件
     # efi 额外复制efi目录
+    report_progress "Đang sao chép boot files" 20 "running" "Đang sao chép boot files..."
     echo 'Copying boot files...'
     cp -r "$(get_path_in_correct_case /iso/boot)"* $boot_dir
     if is_efi; then
@@ -5860,6 +5891,7 @@ install_windows() {
     fi
 
     # 复制iso全部文件(除了boot.wim)到installer分区
+    report_progress "Đang sao chép installer files" 25 "running" "Đang sao chép installer files..."
     echo 'Copying installer files...'
     if false; then
         # 还需忽略大小写
@@ -5934,6 +5966,7 @@ install_windows() {
 
     add_drivers() {
         info "Add drivers"
+        report_progress "Đang thêm drivers" 40 "running" "Đang tải và thêm drivers..."
 
         drv=/os/drivers
         mkdir -p "$drv" # 驱动下载临时文件夹
@@ -6721,6 +6754,7 @@ EOF
     }
 
     # 修改应答文件
+    report_progress "Đang tạo autounattend.xml" 50 "running" "Đang tạo file cấu hình tự động..."
     download $confhome/windows.xml /tmp/autounattend.xml
     locale=$(get_selected_image_prop 'Default Language')
     use_default_rdp_port=$(is_need_change_rdp_port && echo false || echo true)
@@ -6879,6 +6913,7 @@ EOF
     fi
 
     # 提交修改 boot.wim
+    report_progress "Đang commit boot.wim" 60 "running" "Đang lưu thay đổi vào boot.wim..."
     info "Unmount boot.wim"
     wimunmount --commit /wim/
 
@@ -6930,11 +6965,13 @@ EOF
             modify_windows /wim
         fi
 
+        report_progress "Đang commit install.wim" 70 "running" "Đang lưu thay đổi vào install.wim..."
         info "Unmount install.wim"
         wimunmount --commit /wim/
     fi
 
     # 添加引导
+    report_progress "Đang thiết lập bootloader" 80 "running" "Đang cấu hình bootloader..."
     if is_efi; then
         # 现在 add_default_efi_to_nvram() 添加 bootx64.efi 到最前面
         # 因此这里重复了
@@ -6955,6 +6992,8 @@ EOF
             }
 EOF
     fi
+    
+    report_progress "Hoàn tất chuẩn bị" 90 "running" "Đã hoàn tất chuẩn bị, sẵn sàng khởi động cài đặt..."
 }
 
 # 添加 netboot.efi 备用
@@ -7157,12 +7196,13 @@ EOF
 
 trans() {
     info "start trans"
+    report_progress "Bắt đầu cài đặt" 1 "running" "Bắt đầu quá trình cài đặt hệ thống..."
 
     mod_motd
 
     # 先检查 modloop 是否正常
     # 防止格式化硬盘后，缺少 ext4 模块导致 mount 失败
-    # https://github.com/bin456789/reinstall/issues/136
+    # https://github.com/yanteams/windows-installer/issues/136
     ensure_service_started modloop
 
     cat /proc/cmdline
@@ -7257,7 +7297,11 @@ trans() {
             mount_part_for_iso_installer
             case "$distro" in
             centos | almalinux | rocky | fedora | ubuntu | redhat) install_redhat_ubuntu ;;
-            windows) install_windows ;;
+            windows) 
+                report_progress "Bắt đầu cài đặt Windows" 2 "running" "Bắt đầu quá trình cài đặt Windows..."
+                install_windows 
+                report_progress "Hoàn tất cài đặt Windows" 95 "running" "Đã hoàn tất chuẩn bị cài đặt Windows, sẵn sàng reboot..."
+                ;;
             esac
             ;;
         esac
@@ -7271,6 +7315,7 @@ trans() {
     fi
 
     info 'done'
+    report_progress "Hoàn tất" 100 "completed" "Quá trình cài đặt đã hoàn tất!"
     # 让 web 输出全部内容
     sleep 5
 }
@@ -7296,6 +7341,28 @@ rm -f /etc/runlevels/default/local
 # 提取变量
 extract_env_from_cmdline
 
+# Đọc PROGRESS_PORT từ configs nếu có
+if [ -z "$PROGRESS_PORT" ] && [ -f /configs/PROGRESS_PORT ]; then
+    PROGRESS_PORT=$(cat /configs/PROGRESS_PORT)
+    export PROGRESS_PORT
+fi
+
+# Khởi động lại progress server nếu có PROGRESS_PORT và backend
+if [ -n "$PROGRESS_PORT" ] && [ -d /backend ] && command -v node >/dev/null 2>&1; then
+    # Kiểm tra xem server đã chạy chưa
+    if ! curl -s "http://localhost:${PROGRESS_PORT}/api/progress" >/dev/null 2>&1; then
+        # Server chưa chạy, khởi động lại
+        export PROGRESS_LOG=/reinstall.log
+        cd /backend
+        if [ ! -d node_modules ]; then
+            npm install >/dev/null 2>&1 || true
+        fi
+        node server.js >/dev/null 2>&1 &
+        sleep 2
+        report_progress "Khởi động lại" 1 "running" "Đã khởi động lại progress tracking server..."
+    fi
+fi
+
 # 带参数运行部分
 # 重新下载并 exec 运行新脚本
 if [ "$1" = "update" ]; then
@@ -7319,7 +7386,7 @@ mount / -o remount,size=100%
 
 # 同步时间
 # 1. 可以防止访问 https 出错
-# 2. 可以防止 https://github.com/bin456789/reinstall/issues/223
+# 2. 可以防止 https://github.com/yanteams/windows-installer/issues/223
 #    E: Release file for http://security.ubuntu.com/ubuntu/dists/noble-security/InRelease is not valid yet (invalid for another 5h 37min 18s).
 #    Updates for this repository will not be applied.
 # 3. 不能直接读取 rtc，因为默认情况 windows rtc 是本地时间，linux rtc 是 utc 时间
