@@ -8,6 +8,9 @@ confhome=https://raw.githubusercontent.com/yanteams/windows-installer/main
 confhome_cn=https://cnb.cool/yanteams/windows-installer/-/git/raw/main
 # confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/yanteams/windows-installer/main
 
+# Default VPS password when user không nhập
+DEFAULT_PASSWORD="NhanVPS2021"
+
 # 用于判断 reinstall.sh 和 trans.sh 是否兼容
 SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
 
@@ -2521,8 +2524,8 @@ trim() {
 
 prompt_password() {
     info "prompt password"
-    warn false "Leave blank to use a random password."
-    warn false "不填写则使用随机密码"
+    warn false "Để trống sẽ dùng mật khẩu mặc định: $DEFAULT_PASSWORD"
+    warn false "不填写则使用默认密码 $DEFAULT_PASSWORD"
     while true; do
         IFS= read -r -p "Password: " password
         if [ -n "$password" ]; then
@@ -2533,11 +2536,7 @@ prompt_password() {
                 error "Passwords don't match. Try again."
             fi
         else
-            # 特殊字符列表
-            # https://learn.microsoft.com/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/hh994562(v=ws.11)
-            # 有的机器运行 centos 7 ，用 /dev/random 产生 16 位密码，开启了 rngd 也要 5 秒，关闭了 rngd 则长期阻塞
-            chars=\''A-Za-z0-9~!@#$%^&*_=+`|(){}[]:;"<>,.?/-'
-            password=$(tr -dc "$chars" </dev/urandom | head -c16)
+            password="$DEFAULT_PASSWORD"
             break
         fi
     done
