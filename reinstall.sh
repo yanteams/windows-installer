@@ -200,7 +200,7 @@ translate_vi() {
     "Could not detect RAM size.")
         echo "Không xác định được dung lượng RAM."
         ;;
-    Could\ not\ install\ *\ RAM\ <\ *)
+    "Could not install * RAM < *")
         echo "Không thể cài đặt vì RAM không đủ."
         ;;
     "Could not generate sha512 password.")
