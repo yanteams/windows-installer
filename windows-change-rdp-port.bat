@@ -15,9 +15,6 @@ rem v2.33|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=3389|App=%SystemRoot%
 rem RemoteDesktop-UserMode-In-UDP
 rem v2.33|Action=Allow|Active=TRUE|Dir=In|Protocol=17|LPort=3389|App=%SystemRoot%\system32\svchost.exe|Svc=termservice|Name=@FirewallAPI.dll,-28776|Desc=@FirewallAPI.dll,-28777|EmbedCtxt=@FirewallAPI.dll,-28752|
 
-rem Enable WinRM trước để có thể remote nếu RDP bị lỗi
-call :enable_winrm
-
 rem 设置端口
 reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v PortNumber /t REG_DWORD /d %RdpPort% /f
 
@@ -40,20 +37,6 @@ rem 家庭版没有 rdp 服务
 sc query TermService
 if %errorlevel% == 1060 goto :del
 
-rem Kiểm tra xem có active RDP session không
-call :check_rdp_sessions
-if %hasActiveSessions% == 1 (
-    rem Có session đang active, đợi một chút rồi thử lại
-    echo Waiting for active RDP sessions to disconnect...
-    timeout /t 30 /nobreak >nul
-    call :check_rdp_sessions
-    if %hasActiveSessions% == 1 (
-        rem Vẫn có session, đợi thêm
-        echo Still have active sessions, waiting more...
-        timeout /t 60 /nobreak >nul
-    )
-)
-
 rem 重启服务 可以用 sc 或者 net
 rem UmRdpService 依赖 TermService
 rem sc stop 不能处理依赖关系，因此 sc stop TermService 前需要 sc stop UmRdpService
@@ -68,90 +51,15 @@ rem 有的机器会死循环，开机 logo 不断转圈
 rem 通过 netstat netstat -ano 可以看到端口已修改成功，但rdp服务不断重启 (pid一直改变)
 rem 因此限定重试次数避免死循环
 
-set retryCount=3
-set maxWaitTime=300
+set retryCount=5
 
 :restartRDP
-if %retryCount% LEQ 0 (
-    echo Failed to restart RDP service after multiple attempts.
-    echo Port has been changed to %RdpPort%, but service restart failed.
-    echo You may need to manually restart the service or reboot.
-    goto :del
-)
-
-rem Thử restart với timeout
-net stop TermService /y >nul 2>&1
-if %errorlevel% == 0 (
-    timeout /t 3 /nobreak >nul
-    net start TermService >nul 2>&1
-    if %errorlevel% == 0 (
-        rem Thành công, đợi service khởi động hoàn toàn
-        timeout /t 5 /nobreak >nul
-        goto :verify
-    )
-)
-
-rem Thất bại, retry
-set /a retryCount-=1
-echo Retrying RDP service restart... (%retryCount% attempts left)
-timeout /t 15 /nobreak >nul
-goto :restartRDP
-
-:verify
-rem Kiểm tra service đã chạy chưa
-sc query TermService | find "RUNNING" >nul
-if %errorlevel% == 0 (
-    echo RDP service restarted successfully on port %RdpPort%
-    goto :del
-) else (
-    rem Service chưa chạy, retry
+if %retryCount% LEQ 0 goto :del
+net stop TermService /y && net start TermService || (
     set /a retryCount-=1
-    if %retryCount% GTR 0 (
-        timeout /t 10 /nobreak >nul
-        goto :restartRDP
-    ) else (
-        echo Warning: RDP service may not be running properly.
-        echo Port has been changed to %RdpPort%.
-        goto :del
-    )
+    timeout 10
+    goto :restartRDP
 )
 
 :del
 del "%~f0"
-exit /b
-
-:check_rdp_sessions
-rem Kiểm tra xem có active RDP session không
-set hasActiveSessions=0
-for /f "tokens=2" %%a in ('query session 2^>nul ^| find /c /i "Active"') do (
-    if %%a GTR 0 set hasActiveSessions=1
-)
-exit /b
-
-:enable_winrm
-rem Enable WinRM để có thể remote qua PowerShell nếu RDP bị lỗi
-echo Enabling WinRM for remote access...
-
-rem Kiểm tra WinRM service
-sc query WinRM >nul 2>&1
-if %errorlevel% == 1060 (
-    echo WinRM service not available, skipping...
-    exit /b
-)
-
-rem Enable WinRM
-winrm quickconfig -force -q >nul 2>&1
-
-rem Cấu hình WinRM để chấp nhận kết nối từ xa
-winrm set winrm/config/service/auth @{Basic="true"} >nul 2>&1
-winrm set winrm/config/service @{AllowUnencrypted="true"} >nul 2>&1
-
-rem Mở firewall cho WinRM
-netsh advfirewall firewall add rule name="WinRM HTTP" dir=in action=allow protocol=TCP localport=5985 >nul 2>&1
-netsh advfirewall firewall add rule name="WinRM HTTPS" dir=in action=allow protocol=TCP localport=5986 >nul 2>&1
-
-rem Khởi động WinRM service
-net start WinRM >nul 2>&1
-
-echo WinRM enabled on ports 5985 (HTTP) and 5986 (HTTPS)
-exit /b
