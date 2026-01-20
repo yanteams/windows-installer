@@ -378,6 +378,16 @@ setup_websocketd() {
         stdbuf -oL -eL sh -c "tail -fn+0 /reinstall.log | tr '\r' '\n' | grep -Fiv -e password -e token" &
 }
 
+get_primary_ipv4() {
+    # best-effort: pick default route source IP
+    if command -v ip >/dev/null 2>&1; then
+        ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
+        return
+    fi
+    # fallback
+    hostname -I 2>/dev/null | awk '{print $1}'
+}
+
 get_approximate_ram_size() {
     # lsmem 需要 util-linux
     if false && is_have_cmd lsmem; then
@@ -399,6 +409,9 @@ setup_web_if_enough_ram() {
         # setup_lighttpd
         # setup_nginx
         setup_websocketd
+        ip4=$(get_primary_ipv4)
+        [ -z "$ip4" ] && ip4="SERVER_IP"
+        echo "Theo dõi quá trình cài đặt tại: http://$ip4:$web_port" >&2
     fi
 }
 

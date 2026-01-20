@@ -291,8 +291,8 @@ error_and_exit() {
 
 show_dd_password_tips() {
     warn false "
-This password is only used for SSH access to view logs during the installation.
-Password of the image will NOT modify.
+Mật khẩu này chỉ dùng để SSH vào xem log trong quá trình cài đặt.
+Mật khẩu bên trong image sẽ KHÔNG bị thay đổi.
 
 密码仅用于安装过程中通过 SSH 查看日志。
 镜像的密码不会被修改。
@@ -4803,6 +4803,8 @@ elif is_alpine_live; then
 elif is_use_dd; then
     show_dd_password_tips
     echo 'Reboot to start DD.'
+    echo 'Rebooting now...'
+    sudo reboot
 elif [ "$distro" = fnos ]; then
     echo "Special note for FNOS:"
     echo "Reboot to start the installation."

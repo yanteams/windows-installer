@@ -2,37 +2,105 @@
 <html>
 
 <head>
-    <title>Reinstall Logs</title>
+    <title>Windows Installer</title>
     <style>
+        :root {
+            color-scheme: light dark;
+            --bg: #0f172a;
+            --fg: #e2e8f0;
+            --muted: #94a3b8;
+            --accent: #38bdf8;
+            --accent-2: #22c55e;
+            --danger: #ef4444;
+            --card: #0b1220;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             margin: 0;
             padding: 0;
-            overflow: hidden;
+            background: var(--bg);
+            color: var(--fg);
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            background: var(--card);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+
+        .title {
+            font-weight: 700;
+            font-size: 15px;
+        }
+
+        .status {
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: rgba(56, 189, 248, 0.15);
+            color: var(--accent);
+            font-size: 12px;
+        }
+
+        .status.offline {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+        }
+
+        .spacer {
+            flex: 1;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--fg);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.1);
         }
 
         #log-container {
-            height: calc(100vh);
+            height: calc(100vh - 56px);
             margin: 0;
-            padding: 8px;
-            overflow-y: scroll;
+            padding: 12px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
         }
 
         #scroll-to-bottom {
             position: fixed;
-            bottom: 24px;
-            right: 24px;
-            background-color: #0099FF;
+            bottom: 20px;
+            right: 20px;
+            background-color: var(--accent);
             color: #fff;
             border: none;
             cursor: pointer;
             display: none;
-            width: 48px;
-            height: 48px;
+            width: 44px;
+            height: 44px;
             border-radius: 50%;
+            box-shadow: 0 6px 16px rgba(56, 189, 248, 0.35);
         }
 
         #scroll-to-bottom:hover {
-            background-color: #00CCFF;
+            background-color: #1ea8e6;
         }
 
         #scroll-to-bottom svg {
@@ -40,37 +108,71 @@
         }
 
         .done {
-            background-color: #cfc;
+            background-color: #0b2a12;
         }
 
         .error {
-            background-color: #fcc;
+            background-color: #2a0b0b;
         }
     </style>
 </head>
 
 <body>
+    <div class="toolbar">
+        <div class="title">Windows Installer</div>
+        <div id="status" class="status">Connecting...</div>
+        <div class="spacer"></div>
+        <button id="toggle-scroll" class="btn">Pause auto-scroll</button>
+        <button id="copy-log" class="btn">Copy log</button>
+        <button id="clear-log" class="btn">Clear</button>
+    </div>
+
     <pre id="log-container"></pre>
-    <button id="scroll-to-bottom">
+    <button id="scroll-to-bottom" title="Scroll to bottom">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
             <path d="M5 10l7 7 7-7H5z" />
         </svg>
     </button>
 
-    <script
-        src="https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/reconnecting-websocket/1.0.0/reconnecting-websocket.min.js"
+    <script src="https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/reconnecting-websocket/1.0.0/reconnecting-websocket.min.js"
         type="application/javascript"></script>
 
     <script>
         const logContainer = document.getElementById('log-container');
         const scrollToBottomButton = document.getElementById('scroll-to-bottom');
+        const toggleScrollBtn = document.getElementById('toggle-scroll');
+        const copyBtn = document.getElementById('copy-log');
+        const clearBtn = document.getElementById('clear-log');
+        const statusEl = document.getElementById('status');
+
+        let autoScroll = true;
         let shouldScrollToBottom = true;
 
-        // 缓冲区相关
+        // Buffering
         let messageBuffer = [];
         let flushScheduled = false;
-        const BUFFER_FLUSH_INTERVAL = 100; // 毫秒
-        const BUFFER_MAX_SIZE = 50; // 最大缓冲消息数
+        const BUFFER_FLUSH_INTERVAL = 100; // ms
+        const BUFFER_MAX_SIZE = 50;
+
+        toggleScrollBtn.addEventListener('click', () => {
+            autoScroll = !autoScroll;
+            toggleScrollBtn.textContent = autoScroll ? 'Pause auto-scroll' : 'Resume auto-scroll';
+        });
+
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(logContainer.textContent);
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => copyBtn.textContent = 'Copy log', 1200);
+            } catch (e) {
+                copyBtn.textContent = 'Copy failed';
+                setTimeout(() => copyBtn.textContent = 'Copy log', 1200);
+            }
+        });
+
+        clearBtn.addEventListener('click', () => {
+            logContainer.textContent = '';
+        });
 
         scrollToBottomButton.addEventListener('click', () => {
             logContainer.scrollTop = logContainer.scrollHeight;
@@ -78,27 +180,24 @@
 
         logContainer.addEventListener('scroll', () => {
             const isAtBottom = Math.ceil(logContainer.scrollTop + logContainer.clientHeight) >= logContainer.scrollHeight;
-            if (isAtBottom) {
-                scrollToBottomButton.style.display = 'none';
-            } else {
-                scrollToBottomButton.style.display = 'block';
-            }
-
+            scrollToBottomButton.style.display = isAtBottom ? 'none' : 'block';
             shouldScrollToBottom = isAtBottom;
         });
 
-        // 刷新缓冲区到 DOM
+        function updateStatus(online, text) {
+            statusEl.textContent = text;
+            statusEl.classList.toggle('offline', !online);
+        }
+
         function flushBuffer() {
             if (messageBuffer.length === 0) {
                 flushScheduled = false;
                 return;
             }
 
-            // 批量更新文本内容
             const batchText = messageBuffer.join('\n');
-            logContainer.textContent += '\n' + batchText;
+            logContainer.textContent += (logContainer.textContent ? '\n' : '') + batchText;
 
-            // 检查状态变化（优先级：error > done > start）
             if (batchText.includes('***** ERROR *****')) {
                 document.body.className = 'error';
             } else if (batchText.includes('***** DONE *****')) {
@@ -107,17 +206,14 @@
                 document.body.className = '';
             }
 
-            // 自动滚动
-            if (shouldScrollToBottom) {
+            if (autoScroll && shouldScrollToBottom) {
                 logContainer.scrollTop = logContainer.scrollHeight;
             }
 
-            // 清空缓冲区
             messageBuffer = [];
             flushScheduled = false;
         }
 
-        // 调度刷新
         function scheduleFlush() {
             if (!flushScheduled) {
                 flushScheduled = true;
@@ -127,28 +223,27 @@
             }
         }
 
-        // 添加消息到缓冲区
         function bufferMessage(message) {
             messageBuffer.push(message);
-
-            // 如果缓冲区满了，立即刷新
             if (messageBuffer.length >= BUFFER_MAX_SIZE) {
-                if (flushScheduled) {
-                    // 取消之前的调度，立即刷新
-                    flushScheduled = false;
-                }
+                flushScheduled = false;
                 flushBuffer();
             } else {
                 scheduleFlush();
             }
         }
 
-        var ws = new ReconnectingWebSocket('ws://' + location.host + '/');
+        const ws = new ReconnectingWebSocket('ws://' + location.host + '/');
         ws.onopen = function () {
             bufferMessage('WebSocket Connected.');
+            updateStatus(true, 'Online');
         };
         ws.onclose = function () {
             bufferMessage('WebSocket Disconnected.');
+            updateStatus(false, 'Offline');
+        };
+        ws.onerror = function () {
+            updateStatus(false, 'Error');
         };
         ws.onmessage = function (event) {
             bufferMessage(event.data);
