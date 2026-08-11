@@ -12,7 +12,7 @@ confhome_cn=https://cnb.cool/yanteams/windows-installer/-/git/raw/main
 DEFAULT_PASSWORD="NhanVPS2021"
 
 # 用于判断 reinstall.sh 和 trans.sh 是否兼容
-SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
+SCRIPT_VERSION=5C1D9A72-B4E0-47F1-9D3A-2F8E6B0C1D45
 
 # 记录要用到的 windows 程序，运行时输出删除 \r
 WINDOWS_EXES='cmd powershell wmic reg diskpart netsh bcdedit mountvol'
@@ -92,6 +92,7 @@ Usage: $reinstall_____ anolis      7|8|23
                        [--ssh-port  PORT]
                        [--web-port  PORT]
                        [--frpc-toml PATH]
+                       [--main-disk DISK]   vda | /dev/nvme0n1 | partition table id
 
                        For Windows Only:
                        [--allow-ping]
@@ -2619,9 +2620,29 @@ save_password() {
     fi
 }
 
+# 根据分区表 id 找出设备名
+# 在原系统中 xda 只用于探测硬盘驱动，真正分区时 trans.sh 会再按 id 查找一次
+# 因此找不到也不中断
+find_xda_by_main_disk() {
+    install_pkg fdisk
+    # shellcheck disable=SC2010
+    for disk in $(ls /sys/block/ | grep -Ev '^(loop|sr|nbd)'); do
+        if fdisk -l "/dev/$disk" 2>/dev/null | grep -iq "$main_disk"; then
+            xda=$disk
+            info "Main disk: $xda"
+            return
+        fi
+    done
+    warn "Could not find disk with id: $main_disk"
+}
+
 # 记录主硬盘
 find_main_disk() {
     if [ -n "$main_disk" ]; then
+        # 用 --main-disk 指定了分区表 id 时，仍需要 xda 来探测硬盘驱动
+        if ! is_in_windows && [ -z "$xda" ]; then
+            find_xda_by_main_disk
+        fi
         return
     fi
 
@@ -2646,18 +2667,24 @@ find_main_disk() {
 
         # 改成先检测 /boot/efi /efi /boot 分区？
 
-        install_pkg lsblk
-        # 查找主硬盘时，优先查找 /boot 分区，再查找 / 分区
-        # lvm 显示的是 /dev/mapper/xxx-yyy，再用第二条命令得到sda
-        mapper=$(mount | awk '$3=="/boot" {print $1}' | grep . || mount | awk '$3=="/" {print $1}')
-        xda=$(lsblk -rn --inverse $mapper | grep -w disk | awk '{print $1}' | sort -u)
-
-        # 检测主硬盘是否横跨多个磁盘
-        os_across_disks_count=$(wc -l <<<"$xda")
-        if [ $os_across_disks_count -eq 1 ]; then
-            info "Main disk: $xda"
+        if [ -n "$force_xda" ]; then
+            # 用户用 --main-disk 指定了设备名
+            xda=$force_xda
+            info "Main disk (specified): $xda"
         else
-            error_and_exit "OS across $os_across_disks_count disk: $xda"
+            install_pkg lsblk
+            # 查找主硬盘时，优先查找 /boot 分区，再查找 / 分区
+            # lvm 显示的是 /dev/mapper/xxx-yyy，再用第二条命令得到sda
+            mapper=$(mount | awk '$3=="/boot" {print $1}' | grep . || mount | awk '$3=="/" {print $1}')
+            xda=$(lsblk -rn --inverse $mapper | grep -w disk | awk '{print $1}' | sort -u)
+
+            # 检测主硬盘是否横跨多个磁盘
+            os_across_disks_count=$(wc -l <<<"$xda")
+            if [ $os_across_disks_count -eq 1 ]; then
+                info "Main disk: $xda"
+            else
+                error_and_exit "OS across $os_across_disks_count disk: $xda"
+            fi
         fi
 
         # 可以用 dd 找出 guid?
@@ -3198,7 +3225,7 @@ build_extra_cmdline() {
     # https://answers.launchpad.net/ubuntu/+question/249456
     # https://salsa.debian.org/installer-team/rootskel/-/blob/master/src/lib/debian-installer-startup.d/S02module-params?ref_type=heads
     for key in confhome hold force_boot_mode force_cn force_old_windows_setup cloud_image main_disk \
-        elts deb_mirror \
+        force_xda elts deb_mirror \
         ssh_port rdp_port web_port allow_ping; do
         value=${!key}
         if [ -n "$value" ]; then
@@ -4068,6 +4095,7 @@ for o in ci installer debug minimal allow-ping force-cn help \
     commit: \
     frpc-conf: frpc-config: frpc-toml: \
     force-boot-mode: \
+    main-disk: disk: \
     force-old-windows-setup:; do
     [ -n "$long_opts" ] && long_opts+=,
     long_opts+=$o
@@ -4157,6 +4185,25 @@ while true; do
             error_and_exit "Invalid $1 value: $2"
         fi
         force_boot_mode=$2
+        shift 2
+        ;;
+    --main-disk | --disk)
+        # 部分厂商会挂载很小的元数据盘/配置盘，自动探测可能选错
+        # 支持两种写法：
+        # 分区表 id  --main-disk 80962158-D6FA-4ED0-904F-C7972E9D0A4F
+        # 设备名     --main-disk vda / --main-disk /dev/nvme0n1
+        [ -n "$2" ] || error_and_exit "Need value for $1"
+        if grep -Eiqx '[0-9a-f]{8}|[0-9a-f-]{36}' <<<"${2#0x}"; then
+            main_disk=${2#0x}
+        else
+            if is_in_windows; then
+                error_and_exit "Need a disk id for $1 in Windows: $2"
+            fi
+            force_xda=$(basename "$2")
+            if ! [ -b "/dev/$force_xda" ]; then
+                error_and_exit "Not a disk: /dev/$force_xda"
+            fi
+        fi
         shift 2
         ;;
     --passwd | --password)

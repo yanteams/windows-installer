@@ -10,11 +10,16 @@ set -eE
 
 # 用于判断 reinstall.sh 和 trans.sh 是否兼容
 # shellcheck disable=SC2034
-SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
+SCRIPT_VERSION=5C1D9A72-B4E0-47F1-9D3A-2F8E6B0C1D45
 
 TRUE=0
 FALSE=1
 EFI_UUID=C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+
+# 小于该容量的硬盘不可能是系统盘
+# 部分厂商会挂载几百 KiB ~ 几十 MiB 的元数据盘/配置盘（如 QEMU HARDDISK 368 KiB）
+# 选中这种盘会导致 parted 报 "Can't have a partition outside the disk!"
+MIN_INSTALLABLE_DISK_MB=2048
 
 error() {
     color='\e[31m'
@@ -51,6 +56,16 @@ translate_vi() {
         ;;
     "Could not find xda: "*)
         echo "Không tìm thấy thiết bị đĩa: ${1#*: }"
+        ;;
+    "Disk "*" is too small: "*)
+        vi_disk=${1#Disk }
+        vi_disk=${vi_disk%% is too small*}
+        echo "Ổ đĩa $vi_disk quá nhỏ để cài đặt (${1##*: }). Hãy dùng --main-disk để chỉ định đúng ổ đĩa hệ thống."
+        ;;
+    "Disk "*" is too small for this image: "*)
+        vi_disk=${1#Disk }
+        vi_disk=${vi_disk%% is too small*}
+        echo "Ổ đĩa $vi_disk không đủ dung lượng cho ảnh cài đặt này (${1#*image: })."
         ;;
     "Failed to start "*)
         echo "Khởi động dịch vụ thất bại: ${1#*start }"
@@ -432,8 +447,14 @@ find_xda() {
     # 因此找到 xda 后要保存 xda 到 /configs/xda
 
     # 先读取之前保存的
+    # 上次运行可能选错了盘（例如厂商的元数据盘），因此缓存的值也要校验
     if xda=$(get_config xda 2>/dev/null) && [ -n "$xda" ]; then
-        return
+        if is_disk_installable "$xda"; then
+            return
+        fi
+        warn "Ignore invalid cached xda: $xda"
+        rm -f /configs/xda
+        xda=
     fi
 
     # 防止 $main_disk 为空
@@ -457,9 +478,24 @@ find_xda() {
 
     if [ "$tool" = sfdisk ]; then
         # sfdisk
-        for disk in $(get_all_disks); do
-            if sfdisk --disk-id "/dev/$disk" | sed 's/0x//' | grep -ix "$main_disk"; then
-                xda=$disk
+        # 第一轮只看容量足够的盘，防止选中厂商的元数据盘/配置盘
+        # 第二轮才看全部盘，避免小硬盘的机器装不了
+        for round in installable all; do
+            for disk in $(get_all_disks); do
+                if [ "$round" = installable ] && ! is_disk_installable "$disk"; then
+                    warn "Skip disk /dev/$disk ($(get_disk_size_mb "$disk")MiB), too small to install."
+                    continue
+                fi
+                if [ "$round" = all ] && is_disk_installable "$disk"; then
+                    # 第一轮已经查过
+                    continue
+                fi
+                if sfdisk --disk-id "/dev/$disk" | sed 's/0x//' | grep -ix "$main_disk"; then
+                    xda=$disk
+                    break
+                fi
+            done
+            if [ -n "$xda" ]; then
                 break
             fi
         done
@@ -471,6 +507,7 @@ find_xda() {
     if [ -n "$xda" ]; then
         set_config xda "$xda"
     else
+        print_all_disks
         error_and_exit "Could not find xda: $main_disk"
     fi
 
@@ -482,6 +519,24 @@ find_xda() {
 get_all_disks() {
     # shellcheck disable=SC2010
     ls /sys/block/ | grep -Ev '^(loop|sr|nbd)'
+}
+
+get_disk_size_mb() {
+    # /sys/block/xxx/size 的单位固定为 512 字节，与硬盘真实扇区大小无关
+    # 此处不用 blockdev，因为 find_xda 时 util-linux 可能还没安装
+    echo $(($(cat "/sys/block/${1#/dev/}/size" 2>/dev/null || echo 0) / 2048))
+}
+
+is_disk_installable() {
+    local d=${1#/dev/}
+    [ -b "/dev/$d" ] && [ "$(get_disk_size_mb "$d")" -ge "$MIN_INSTALLABLE_DISK_MB" ]
+}
+
+print_all_disks() {
+    echo "Disks:" >&2
+    for disk in $(get_all_disks); do
+        echo "  /dev/$disk    $(get_disk_size_mb "$disk")MiB" >&2
+    done
 }
 
 extract_env_from_cmdline() {
@@ -2482,6 +2537,14 @@ pipe_extract() {
 dd_raw_with_extract() {
     info "dd raw"
 
+    # dd 不经过 create_part，因此这里也要检查硬盘容量
+    # 否则选错盘时只会看到 "No space left on device"，无法看出是选错了硬盘
+    xda_size_mb=$(get_disk_size_mb "$xda")
+    if [ "$xda_size_mb" -lt "$MIN_INSTALLABLE_DISK_MB" ]; then
+        print_all_disks
+        error_and_exit "Disk /dev/$xda is too small: ${xda_size_mb}MiB"
+    fi
+
     # 用官方 wget，一来带进度条，二来自带重试功能
     apk add wget
 
@@ -2536,6 +2599,14 @@ create_part() {
     # 除了 dd 都会用到
     info "Create Part"
 
+    # 分区前先检查硬盘容量，否则 parted 只会报
+    # "Can't have a partition outside the disk!"，无法看出是选错了硬盘
+    xda_size_mb=$(get_disk_size_mb "$xda")
+    if [ "$xda_size_mb" -lt "$MIN_INSTALLABLE_DISK_MB" ]; then
+        print_all_disks
+        error_and_exit "Disk /dev/$xda is too small: ${xda_size_mb}MiB"
+    fi
+
     # 分区工具
     apk add parted e2fsprogs
     if is_efi; then
@@ -2562,6 +2633,14 @@ create_part() {
         # 因此还是要额外添加 200m
         # 注意这里单位要用 MiB，因为后面的 border 要以 MiB 计算
         part_size="$((size_bytes / 1024 / 1024 + 200))MiB"
+
+        # installer 分区 + 引导分区 + 系统分区最少要 2GiB
+        # 否则 parted 的 -${part_size} 会落到硬盘开头之前
+        is_efi && boot_part_mb=1041 || boot_part_mb=1
+        need_mb=$((${part_size%MiB} + boot_part_mb + 2048))
+        if [ "$xda_size_mb" -lt "$need_mb" ]; then
+            error_and_exit "Disk /dev/$xda is too small for this image: need ${need_mb}MiB, have ${xda_size_mb}MiB"
+        fi
 
         apk add ntfs-3g-progs
         # 虽然ntfs3不需要fuse，但wimmount需要，所以还是要保留
@@ -7256,6 +7335,19 @@ trans() {
     # 需要在重新分区之前，找到主硬盘
     # 重新运行脚本时，可指定 xda
     # xda=sda ash trans.start
+
+    # reinstall.sh --main-disk vda 会通过 cmdline 传入 force_xda
+    # shellcheck disable=SC2154
+    if [ -z "$xda" ] && [ -n "$force_xda" ]; then
+        xda=${force_xda#/dev/}
+        [ -b "/dev/$xda" ] || {
+            print_all_disks
+            error_and_exit "Could not find xda: $xda"
+        }
+        info false "Main disk (specified): $xda"
+        set_config xda "$xda"
+    fi
+
     if [ -z "$xda" ]; then
         find_xda
     fi
