@@ -4,8 +4,8 @@
 
 set -eE
 # Default repository (upstream customized for yanteams/windows-installer)
-confhome=https://raw.githubusercontent.com/yanteams/windows-installer/main
-confhome_cn=https://cnb.cool/yanteams/windows-installer/-/git/raw/main
+confhome=https://raw.githubusercontent.com/yanteams/windows-installer/main1
+confhome_cn=https://cnb.cool/yanteams/windows-installer/-/git/raw/main1
 # confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/yanteams/windows-installer/main
 
 # Default VPS password when user không nhập
