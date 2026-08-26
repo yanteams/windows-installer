@@ -2496,7 +2496,15 @@ is_use_local_extlinux() {
 is_mbr_using_grub() {
     find_main_disk
     # 各发行版不一定自带 strings hexdump xxd od 命令
-    head -c 440 /dev/$xda | grep --text -iq 'GRUB'
+    if head -c 440 /dev/$xda | grep --text -iq 'GRUB'; then
+        return 0
+    fi
+    # Linode raw disk: MBR toàn 0, host GRUB2 đọc /boot/grub/grub.cfg
+    [ -f /boot/grub/grub.cfg ] || [ -f /boot/grub2/grub.cfg ] && return 0
+    is_have_cmd update-grub && return 0
+    is_have_cmd grub-mkconfig && return 0
+    is_have_cmd grub2-mkconfig && return 0
+    return 1
 }
 
 to_upper() {
@@ -2711,11 +2719,17 @@ find_xda_by_main_disk() {
 
 # 记录主硬盘
 find_main_disk() {
+    # Tránh gọi lại nhiều lần (raw disk không có PTUUID sẽ spam warning)
+    if [ "$main_disk_done" = 1 ]; then
+        return
+    fi
+
     if [ -n "$main_disk" ]; then
         # 用 --main-disk 指定了分区表 id 时，仍需要 xda 来探测硬盘驱动
         if ! is_in_windows && [ -z "$xda" ]; then
             find_xda_by_main_disk
         fi
+        main_disk_done=1
         return
     fi
 
@@ -2788,6 +2802,7 @@ find_main_disk() {
             error_and_exit "Disk ID is invalid: $main_disk"
         fi
     fi
+    main_disk_done=1
 }
 
 is_found_ipv4_netconf() {
@@ -3269,6 +3284,9 @@ find_grub_extlinux_cfg() {
             -exec grep -E -l "$keyword" {} \;
     )
 
+    if [ -z "$cfgs" ]; then
+        error_and_exit "Find 0 $filename."
+    fi
     count="$(wc -l <<<"$cfgs")"
     if [ "$count" -eq 1 ]; then
         echo "$cfgs"
@@ -4818,6 +4836,7 @@ if is_need_grub_extlinux; then
 
     if is_use_local_extlinux; then
         info extlinux
+        [ -n "$extlinux_cfg" ] || error_and_exit "Find 0 extlinux.conf."
         echo $extlinux_cfg
         extlinux_dir="$(dirname $extlinux_cfg)"
 
