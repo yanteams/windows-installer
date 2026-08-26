@@ -457,8 +457,13 @@ find_xda() {
         xda=
     fi
 
-    # 防止 $main_disk 为空
+    # 防止 $main_disk 为空（đĩa raw không PTUUID thì chọn ổ lớn nhất）
     if [ -z "$main_disk" ]; then
+        if xda=$(pick_largest_installable_disk) && ensure_block_dev "$xda"; then
+            warn "cmdline main_disk is empty, using largest /dev/$xda ($(get_disk_size_mb "$xda")MiB)"
+            set_config xda "$xda"
+            return
+        fi
         error_and_exit "cmdline main_disk is empty."
     fi
 

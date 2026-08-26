@@ -72,6 +72,10 @@ get_xda() {
     fi
 
     if [ -z "$main_disk" ]; then
+        if largest=$(pick_largest_installable_disk) && ensure_block_dev "$largest"; then
+            echo "$largest"
+            return
+        fi
         echo 'MAIN_DISK_NOT_FOUND'
         return 1
     fi

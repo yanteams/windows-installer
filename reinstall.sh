@@ -2754,6 +2754,9 @@ find_main_disk() {
             print_all_disks
         fi
 
+        # Luôn truyền tên thiết bị sang Alpine: đĩa không có partition table thì không có PTUUID
+        force_xda=$xda
+
         # 可以用 dd 找出 guid?
 
         # centos7 blkid lsblk 不显示 PTUUID
@@ -2765,16 +2768,25 @@ find_main_disk() {
         # Disk identifier: D6B17C1A-FA1E-40A1-BDCB-0278A3ED9CFC        # gnu fdisk + gpt
         # Disk identifier (GUID): d6b17c1a-fa1e-40a1-bdcb-0278a3ed9cfc # busybox fdisk + gpt
         # 不显示 Disk identifier                                        # busybox fdisk + mbr
+        # filesystem gắn trực tiếp /dev/sda (không có bảng phân vùng) cũng không có id
 
         # 获取 xda 的 id
         install_pkg fdisk
-        main_disk=$(fdisk -l /dev/$xda | grep 'Disk identifier' | awk '{print $NF}' | sed 's/0x//')
+        main_disk=$(fdisk -l /dev/$xda 2>/dev/null | grep -i 'Disk identifier' | awk '{print $NF}' | sed 's/0x//;s/[{}]//g')
+        if ! grep -Eixq '[0-9a-f]{8}|[0-9a-f-]{36}' <<<"$main_disk"; then
+            main_disk=$(lsblk --nodeps -rno PTUUID /dev/$xda 2>/dev/null | head -1)
+        fi
     fi
 
     # 检查 id 格式是否正确
     if ! grep -Eix '[0-9a-f]{8}' <<<"$main_disk" &&
         ! grep -Eix '[0-9a-f-]{36}' <<<"$main_disk"; then
-        error_and_exit "Disk ID is invalid: $main_disk"
+        if [ -n "$force_xda" ]; then
+            warn "Disk has no partition table id, will use /dev/$force_xda"
+            main_disk=
+        else
+            error_and_exit "Disk ID is invalid: $main_disk"
+        fi
     fi
 }
 
