@@ -92,7 +92,7 @@ Usage: $reinstall_____ anolis      7|8|23
                        [--ssh-port  PORT]
                        [--web-port  PORT]
                        [--frpc-toml PATH]
-                       [--main-disk DISK]   vda | /dev/nvme0n1 | partition table id
+                       [--main-disk DISK]   sda | /dev/vda | largest | partition table id
 
                        For Windows Only:
                        [--allow-ping]
@@ -272,6 +272,9 @@ translate_vi() {
         ;;
     "grub not found")
         echo "Không tìm thấy grub."
+        ;;
+    Not\ a\ disk:*)
+        echo "Không phải ổ đĩa: ${1#*: }. Script sẽ chọn ổ dung lượng lớn nhất, hoặc chạy lsblk rồi chỉ định --main-disk sda."
         ;;
     esac
 }
@@ -2620,6 +2623,76 @@ save_password() {
     fi
 }
 
+# 小于该容量的硬盘不可能是系统盘
+# 部分厂商会挂载几百 KiB ~ 几十 MiB 的元数据盘/配置盘
+MIN_INSTALLABLE_DISK_MB=2048
+
+get_all_disks() {
+    # shellcheck disable=SC2010
+    ls /sys/block/ 2>/dev/null | grep -Ev '^(loop|sr|nbd|ram|zram)'
+}
+
+get_disk_size_mb() {
+    # /sys/block/xxx/size 的单位固定为 512 字节，与硬盘真实扇区大小无关
+    echo $(($(cat "/sys/block/${1#/dev/}/size" 2>/dev/null || echo 0) / 2048))
+}
+
+print_all_disks() {
+    local disk have=0
+    echo "Available disks:" >&2
+    for disk in $(get_all_disks); do
+        have=1
+        echo "  /dev/$disk    $(get_disk_size_mb "$disk")MiB" >&2
+    done
+    if [ "$have" -eq 0 ]; then
+        echo "  (none — container/OpenVZ/LXC has no real disk, this script needs KVM/Xen)" >&2
+    fi
+}
+
+# 用户可能传入分区名 vda1 / nvme0n1p1，改成整盘
+resolve_whole_disk() {
+    local name=${1#/dev/}
+    name=${name//$'\r'/}
+    if [ -d "/sys/block/$name" ]; then
+        echo "$name"
+        return 0
+    fi
+    if [ -e "/sys/class/block/$name/partition" ]; then
+        basename "$(readlink -f "/sys/class/block/$name/..")"
+        return 0
+    fi
+    echo "$name"
+}
+
+# 部分 VPS 有 /sys/block/vda 但没 udev，/dev/vda 不存在
+ensure_block_dev() {
+    local name=${1#/dev/} maj min
+    [ -n "$name" ] || return 1
+    [ -b "/dev/$name" ] && return 0
+    [ -f "/sys/block/$name/dev" ] || return 1
+    IFS=: read -r maj min <"/sys/block/$name/dev"
+    [ -n "$maj" ] && [ -n "$min" ] || return 1
+    if [ ! -e "/dev/$name" ]; then
+        mknod "/dev/$name" b "$maj" "$min" 2>/dev/null || true
+    fi
+    [ -b "/dev/$name" ]
+}
+
+# Chọn ổ dung lượng lớn nhất (bỏ đĩa metadata nhỏ của nhà cung cấp)
+pick_largest_installable_disk() {
+    local disk best= best_mb=0 size
+    for disk in $(get_all_disks); do
+        size=$(get_disk_size_mb "$disk")
+        [ "$size" -ge "$MIN_INSTALLABLE_DISK_MB" ] || continue
+        if [ "$size" -gt "$best_mb" ]; then
+            best=$disk
+            best_mb=$size
+        fi
+    done
+    [ -n "$best" ] || return 1
+    echo "$best"
+}
+
 # 根据分区表 id 找出设备名
 # 在原系统中 xda 只用于探测硬盘驱动，真正分区时 trans.sh 会再按 id 查找一次
 # 因此找不到也不中断
@@ -2670,21 +2743,15 @@ find_main_disk() {
         if [ -n "$force_xda" ]; then
             # 用户用 --main-disk 指定了设备名
             xda=$force_xda
-            info "Main disk (specified): $xda"
+            info "Main disk (specified): $xda ($(get_disk_size_mb "$xda")MiB)"
         else
-            install_pkg lsblk
-            # 查找主硬盘时，优先查找 /boot 分区，再查找 / 分区
-            # lvm 显示的是 /dev/mapper/xxx-yyy，再用第二条命令得到sda
-            mapper=$(mount | awk '$3=="/boot" {print $1}' | grep . || mount | awk '$3=="/" {print $1}')
-            xda=$(lsblk -rn --inverse $mapper | grep -w disk | awk '{print $1}' | sort -u)
-
-            # 检测主硬盘是否横跨多个磁盘
-            os_across_disks_count=$(wc -l <<<"$xda")
-            if [ $os_across_disks_count -eq 1 ]; then
-                info "Main disk: $xda"
-            else
-                error_and_exit "OS across $os_across_disks_count disk: $xda"
+            # Mặc định: ổ dung lượng lớn nhất, tránh nhầm vda/sda và đĩa metadata
+            if ! xda=$(pick_largest_installable_disk) || ! ensure_block_dev "$xda"; then
+                print_all_disks
+                error_and_exit "Not a disk: no installable disk"
             fi
+            info "Main disk (largest): $xda ($(get_disk_size_mb "$xda")MiB)"
+            print_all_disks
         fi
 
         # 可以用 dd 找出 guid?
@@ -4192,16 +4259,26 @@ while true; do
         # 支持两种写法：
         # 分区表 id  --main-disk 80962158-D6FA-4ED0-904F-C7972E9D0A4F
         # 设备名     --main-disk vda / --main-disk /dev/nvme0n1
+        # tự chọn    --main-disk largest
         [ -n "$2" ] || error_and_exit "Need value for $1"
-        if grep -Eiqx '[0-9a-f]{8}|[0-9a-f-]{36}' <<<"${2#0x}"; then
+        if grep -Eiqx 'auto|largest|biggest' <<<"${2#/dev/}"; then
+            force_xda=
+        elif grep -Eiqx '[0-9a-f]{8}|[0-9a-f-]{36}' <<<"${2#0x}"; then
             main_disk=${2#0x}
         else
             if is_in_windows; then
                 error_and_exit "Need a disk id for $1 in Windows: $2"
             fi
-            force_xda=$(basename "$2")
-            if ! [ -b "/dev/$force_xda" ]; then
-                error_and_exit "Not a disk: /dev/$force_xda"
+            force_xda=$(resolve_whole_disk "$(basename "$2")")
+            if ! ensure_block_dev "$force_xda"; then
+                if largest=$(pick_largest_installable_disk) && ensure_block_dev "$largest"; then
+                    warn "Not a disk: /dev/$force_xda, using largest /dev/$largest ($(get_disk_size_mb "$largest")MiB)"
+                    print_all_disks
+                    force_xda=$largest
+                else
+                    print_all_disks
+                    error_and_exit "Not a disk: /dev/$force_xda"
+                fi
             fi
         fi
         shift 2

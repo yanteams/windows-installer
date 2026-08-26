@@ -504,12 +504,15 @@ find_xda() {
         xda=$(lsblk --nodeps -rno NAME,PTUUID | grep -iw "$main_disk" | awk '{print $1}')
     fi
 
-    if [ -n "$xda" ]; then
-        set_config xda "$xda"
-    else
-        print_all_disks
-        error_and_exit "Could not find xda: $main_disk"
+    if [ -z "$xda" ]; then
+        if xda=$(pick_largest_installable_disk) && ensure_block_dev "$xda"; then
+            warn "Could not find disk id $main_disk, using largest /dev/$xda ($(get_disk_size_mb "$xda")MiB)"
+        else
+            print_all_disks
+            error_and_exit "Could not find xda: $main_disk"
+        fi
     fi
+    set_config xda "$xda"
 
     if $need_install_tool; then
         apk del $tool
@@ -527,9 +530,37 @@ get_disk_size_mb() {
     echo $(($(cat "/sys/block/${1#/dev/}/size" 2>/dev/null || echo 0) / 2048))
 }
 
+# 部分环境有 /sys/block/vda 但没 udev，需要补 /dev 节点
+ensure_block_dev() {
+    local name=${1#/dev/} maj min
+    [ -n "$name" ] || return 1
+    [ -b "/dev/$name" ] && return 0
+    [ -f "/sys/block/$name/dev" ] || return 1
+    IFS=: read -r maj min <"/sys/block/$name/dev"
+    [ -n "$maj" ] && [ -n "$min" ] || return 1
+    if [ ! -e "/dev/$name" ]; then
+        mknod "/dev/$name" b "$maj" "$min" 2>/dev/null || true
+    fi
+    [ -b "/dev/$name" ]
+}
+
 is_disk_installable() {
     local d=${1#/dev/}
-    [ -b "/dev/$d" ] && [ "$(get_disk_size_mb "$d")" -ge "$MIN_INSTALLABLE_DISK_MB" ]
+    ensure_block_dev "$d" && [ "$(get_disk_size_mb "$d")" -ge "$MIN_INSTALLABLE_DISK_MB" ]
+}
+
+pick_largest_installable_disk() {
+    local disk best= best_mb=0 size
+    for disk in $(get_all_disks); do
+        size=$(get_disk_size_mb "$disk")
+        [ "$size" -ge "$MIN_INSTALLABLE_DISK_MB" ] || continue
+        if [ "$size" -gt "$best_mb" ]; then
+            best=$disk
+            best_mb=$size
+        fi
+    done
+    [ -n "$best" ] || return 1
+    echo "$best"
 }
 
 print_all_disks() {
@@ -7340,11 +7371,15 @@ trans() {
     # shellcheck disable=SC2154
     if [ -z "$xda" ] && [ -n "$force_xda" ]; then
         xda=${force_xda#/dev/}
-        [ -b "/dev/$xda" ] || {
-            print_all_disks
-            error_and_exit "Could not find xda: $xda"
-        }
-        info false "Main disk (specified): $xda"
+        if ! ensure_block_dev "$xda"; then
+            if xda=$(pick_largest_installable_disk) && ensure_block_dev "$xda"; then
+                warn "Not a disk: /dev/${force_xda#/dev/}, using largest /dev/$xda"
+            else
+                print_all_disks
+                error_and_exit "Could not find xda: ${force_xda#/dev/}"
+            fi
+        fi
+        info false "Main disk (specified): $xda ($(get_disk_size_mb "$xda")MiB)"
         set_config xda "$xda"
     fi
 
